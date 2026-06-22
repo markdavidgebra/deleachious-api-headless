@@ -56,9 +56,14 @@ return [
             'http://127.0.0.1:8081',
             'http://localhost:19006',
 
+            // Local dev (QR scanner via Vite)
+            'http://localhost:5175',
+            'http://127.0.0.1:5175',
+
             // Production frontends
             'https://admin.daleachious.cloud',
             'https://app.daleachious.cloud',
+            'https://scan.daleachious.cloud',
             'https://daleachious.cloud',
             'https://www.daleachious.cloud',
         ],
