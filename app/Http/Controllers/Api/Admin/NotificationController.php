@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Notification;
 use App\Models\User;
-use App\Models\LoyaltyTier;
 use App\Services\FirebaseService;
 use Illuminate\Http\Request;
 
@@ -21,7 +20,7 @@ class NotificationController extends Controller
     // GET all notifications
     public function index(Request $request)
     {
-        $notifications = Notification::with(['sentBy', 'user', 'loyaltyTier'])
+        $notifications = Notification::with(['sentBy', 'user'])
             ->when($request->type,   fn($q) => $q->where('type',   $request->type))
             ->when($request->target, fn($q) => $q->where('target', $request->target))
             ->orderByDesc('created_at')
@@ -34,7 +33,7 @@ class NotificationController extends Controller
     public function show(Notification $notification)
     {
         return response()->json(
-            $notification->load(['sentBy', 'user', 'loyaltyTier'])
+            $notification->load(['sentBy', 'user'])
         );
     }
 
@@ -42,13 +41,12 @@ class NotificationController extends Controller
     public function send(Request $request)
     {
         $request->validate([
-            'title'           => 'required|string|max:100',
-            'body'            => 'required|string|max:500',
-            'type'            => 'required|in:promo,order_update,points,general',
-            'target'          => 'required|in:all,specific_user,specific_tier',
-            'user_id'         => 'required_if:target,specific_user|exists:users,id',
-            'loyalty_tier_id' => 'required_if:target,specific_tier|exists:loyalty_tiers,id',
-            'data'            => 'nullable|array',
+            'title'   => 'required|string|max:100',
+            'body'    => 'required|string|max:500',
+            'type'    => 'required|in:promo,order_update,points,general',
+            'target'  => 'required|in:all,specific_user',
+            'user_id' => 'required_if:target,specific_user|exists:users,id',
+            'data'    => 'nullable|array',
         ]);
 
         $tokens     = [];
@@ -69,14 +67,6 @@ class NotificationController extends Controller
             if ($user && $user->fcm_token) {
                 $tokens = [$user->fcm_token];
             }
-
-        } elseif ($request->target === 'specific_tier') {
-
-            // Send to all users in a specific loyalty tier
-            $tokens = User::where('loyalty_tier_id', $request->loyalty_tier_id)
-                ->whereNotNull('fcm_token')
-                ->pluck('fcm_token')
-                ->toArray();
         }
 
         // ── Send via Firebase ─────────────────────────────
@@ -101,26 +91,23 @@ class NotificationController extends Controller
 
         // ── Save to database ──────────────────────────────
         $notification = Notification::create([
-            'sent_by'         => auth()->id(),
-            'user_id'         => $request->target === 'specific_user'
-                                    ? $request->user_id
-                                    : null,
-            'loyalty_tier_id' => $request->target === 'specific_tier'
-                                    ? $request->loyalty_tier_id
-                                    : null,
-            'title'           => $request->title,
-            'body'            => $request->body,
-            'type'            => $request->type,
-            'data'            => $request->data,
-            'target'          => $request->target,
-            'sent_count'      => $sentCount,
+            'sent_by'    => auth()->id(),
+            'user_id'    => $request->target === 'specific_user'
+                                ? $request->user_id
+                                : null,
+            'title'      => $request->title,
+            'body'       => $request->body,
+            'type'       => $request->type,
+            'data'       => $request->data,
+            'target'     => $request->target,
+            'sent_count' => $sentCount,
         ]);
 
         return response()->json([
             'message'       => 'Notification sent successfully!',
             'sent_count'    => $sentCount,
             'total_tokens'  => count($tokens),
-            'notification'  => $notification->load(['sentBy', 'user', 'loyaltyTier']),
+            'notification'  => $notification->load(['sentBy', 'user']),
         ], 201);
     }
 

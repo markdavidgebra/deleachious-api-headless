@@ -10,6 +10,7 @@ use App\Models\Topup;
 use App\Models\WalletSetting;
 use App\Models\WalletTransaction;
 use App\Services\PayMongoService;
+use App\Services\TopupSettlementService;
 use App\Services\WalletService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -27,6 +28,7 @@ class WalletController extends Controller
     public function __construct(
         protected WalletService $wallet,
         protected PayMongoService $paymongo,
+        protected TopupSettlementService $settlement,
     ) {}
 
     // GET /user/wallet/balance ────────────────────────────────────────
@@ -73,13 +75,54 @@ class WalletController extends Controller
 
         $wallet = $request->user()->getOrCreateWallet();
 
-        $query = WalletTransaction::where('wallet_id', $wallet->id)
+        $paginator = WalletTransaction::where('wallet_id', $wallet->id)
+            ->with(['branch', 'source' => function ($morphTo) {
+                $morphTo->morphWith([
+                    Purchase::class => ['order:id,order_number,status'],
+                    Topup::class    => [],
+                ]);
+            }])
             ->when($request->type, fn ($q, $t) => $q->where('transaction_type', $t))
-            ->orderByDesc('created_at');
+            ->orderByDesc('created_at')
+            ->paginate($request->per_page ?? 20);
 
-        return response()->json(
-            $query->paginate($request->per_page ?? 20),
-        );
+        // Surface linked order fulfillment status on purchase rows so the
+        // mobile history UI can show "preparing / ready / …" instead of the
+        // wallet ledger status ("completed" = paid).
+        $paginator->getCollection()->transform(function (WalletTransaction $tx) {
+            $order = null;
+            if ($tx->transaction_type === 'purchase' && $tx->source instanceof Purchase) {
+                $order = $tx->source->order;
+            }
+
+            $tx->setAttribute('order_id', $order?->id);
+            $tx->setAttribute('order_number', $order?->order_number);
+            $tx->setAttribute('order_status', $order?->status);
+
+            // PayMongo payment id (pay_…) for matching dashboard payments.
+            $meta = is_array($tx->metadata) ? $tx->metadata : [];
+            $paymongoPaymentId = $meta['paymongo_payment_id']
+                ?? $meta['gateway_payment_id']
+                ?? ($tx->source instanceof Topup ? $tx->source->gateway_payment_id : null);
+
+            // Older top-ups may not be linked as morph source yet.
+            if (! $paymongoPaymentId && $tx->transaction_type === 'topup') {
+                $paymongoPaymentId = Topup::where('wallet_transaction_id', $tx->id)
+                    ->value('gateway_payment_id');
+            }
+
+            $tx->setAttribute('paymongo_payment_id', $paymongoPaymentId);
+            $tx->setAttribute('gateway_payment_id', $paymongoPaymentId);
+            $tx->setAttribute(
+                'topup_reference',
+                $meta['topup_reference']
+                    ?? ($tx->source instanceof Topup ? $tx->source->reference_no : null),
+            );
+
+            return $tx;
+        });
+
+        return response()->json($paginator);
     }
 
     // GET /user/wallet/terms ──────────────────────────────────────────
@@ -187,6 +230,45 @@ class WalletController extends Controller
             'checkout_url' => $checkout['checkout_url'] ?? null,
             'message'      => 'Top-up initiated. Complete payment in the gateway page.',
         ], 201);
+    }
+
+    // POST /user/wallet/topup/{topup}/confirm ─────────────────────────
+    /**
+     * After the user finishes (or closes) PayMongo checkout, the app calls
+     * this to sync payment status. Needed on local/dev where webhooks cannot
+     * reach the API, and as a reliable fallback in production.
+     */
+    public function confirmTopup(Request $request, Topup $topup)
+    {
+        if ((int) $topup->user_id !== (int) $request->user()->id) {
+            return response()->json(['message' => 'Top-up not found.'], 404);
+        }
+
+        try {
+            $result = $this->settlement->settleFromGateway($topup);
+        } catch (WalletException $e) {
+            return $e->toResponse();
+        }
+
+        $wallet = $request->user()->getOrCreateWallet();
+
+        return response()->json([
+            'topup'    => $result['topup'],
+            'credited' => $result['credited'],
+            'pending'  => $result['pending'],
+            'paymongo_payment_id' => $result['topup']->gateway_payment_id,
+            'wallet'   => [
+                'id'              => $wallet->id,
+                'currency'        => $wallet->currency,
+                'current_balance' => (float) $wallet->fresh()->current_balance,
+                'status'          => $wallet->status,
+            ],
+            'message' => $result['credited']
+                ? 'Top-up credited successfully.'
+                : ($result['pending']
+                    ? 'Payment not completed yet.'
+                    : 'Top-up already settled.'),
+        ]);
     }
 
     // POST /user/wallet/pay ───────────────────────────────────────────

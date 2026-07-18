@@ -5,7 +5,6 @@ use App\Http\Controllers\Api\Admin\AuthController as AdminAuthController;
 use App\Http\Controllers\Api\Admin\CategoryController;
 use App\Http\Controllers\Api\Admin\ProductController;
 use App\Http\Controllers\Api\Admin\MemberController;
-use App\Http\Controllers\Api\Admin\LoyaltyTierController;
 use App\Http\Controllers\Api\Admin\LoyaltyPointSettingController;
 use App\Http\Controllers\Api\Admin\RewardController;
 use App\Http\Controllers\Api\Admin\RedemptionController;
@@ -21,6 +20,7 @@ use App\Http\Controllers\Api\Admin\AuditLogController;
 use App\Http\Controllers\Api\Admin\ShopSettingController;
 use App\Http\Controllers\Api\Admin\WalletController as AdminWalletController;
 use App\Http\Controllers\Api\Admin\WalletSettingController;
+use App\Http\Controllers\Api\User\OrderController as UserOrderController;
 use App\Http\Controllers\Api\User\WalletController as UserWalletController;
 use App\Http\Controllers\Api\Webhook\PaymongoWebhookController;
 
@@ -40,9 +40,6 @@ Route::prefix('admin')->group(function () {
         Route::get('members', [MemberController::class, 'index']);
         Route::get('members/{user}', [MemberController::class, 'show']);
         Route::get('members/{user}/points-history', [MemberController::class, 'pointsHistory']);
-
-        // Loyalty Tiers
-        Route::apiResource('loyalty-tiers', LoyaltyTierController::class);
 
         // Loyalty Point Settings
         Route::get('loyalty-points/settings', [LoyaltyPointSettingController::class, 'getSettings']);
@@ -152,9 +149,6 @@ Route::prefix('user')->group(function () {
     // Public read-only support data for the mobile UI
     Route::get('/shop-settings',  fn () => response()->json(\App\Models\ShopSetting::getSettings()));
     Route::get('/wallet/terms',   [UserWalletController::class, 'terms']);
-    Route::get('/loyalty-tiers',  fn () => response()->json(
-        \App\Models\LoyaltyTier::orderBy('min_points')->get()
-    ));
 
     // Active store/branch directory shown in the mobile Stores tab.
     // Only public-facing fields are returned (no staff/order counts).
@@ -181,12 +175,24 @@ Route::prefix('user')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('/logout', [UserAuthController::class, 'logout']);
         Route::get('/me',      [UserAuthController::class, 'me']);
+        Route::patch('/profile', [UserAuthController::class, 'updateProfile']);
+        Route::post('/change-password', [UserAuthController::class, 'changePassword']);
+        Route::post('/avatar', [UserAuthController::class, 'uploadAvatar']);
+        Route::delete('/avatar', [UserAuthController::class, 'deleteAvatar']);
 
         // Notifications
         Route::get('notifications',              [UserNotificationController::class, 'index']);
         Route::post('notifications/fcm-token',   [UserNotificationController::class, 'updateFcmToken']);
         Route::patch('notifications/read-all',   [UserNotificationController::class, 'markAllRead']);
         Route::patch('notifications/{notification}/read', [UserNotificationController::class, 'markRead']);
+
+        // ── Orders (mobile app — wallet checkout only) ────────────────
+        Route::prefix('orders')->group(function () {
+            Route::get('/', [UserOrderController::class, 'index']);
+            Route::middleware(['throttle:wallet-pay', 'wallet.idempotency:purchase'])
+                ->post('checkout', [UserOrderController::class, 'checkout']);
+            Route::get('{order}', [UserOrderController::class, 'show']);
+        });
 
         // ── Wallet (mobile app) ───────────────────────────────────────
         Route::prefix('wallet')->group(function () {
@@ -199,6 +205,10 @@ Route::prefix('user')->group(function () {
             // Top-up: heavy throttle + idempotency required.
             Route::middleware(['throttle:wallet-topup', 'wallet.idempotency:topup'])
                 ->post('topup', [UserWalletController::class, 'topup']);
+
+            // Confirm after PayMongo checkout (no new charge — sync only).
+            Route::middleware('throttle:wallet-write')
+                ->post('topup/{topup}/confirm', [UserWalletController::class, 'confirmTopup']);
 
             // Pay & QR: medium throttle + idempotency.
             Route::middleware(['throttle:wallet-pay', 'wallet.idempotency:purchase'])->group(function () {

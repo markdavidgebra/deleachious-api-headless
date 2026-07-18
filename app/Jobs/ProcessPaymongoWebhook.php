@@ -3,7 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Topup;
-use App\Models\User;
+use App\Services\TopupSettlementService;
 use App\Services\WalletService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -13,10 +13,10 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Processes a verified PayMongo webhook event off-thread. The HTTP
- * controller verifies the signature, persists the raw event, and then
- * dispatches this job — the gateway gets a fast 200 OK back regardless
- * of how long it takes to credit the wallet.
+ * Processes a verified PayMongo webhook event.
+ *
+ * The controller preferably runs this synchronously (`dispatchSync`) so
+ * wallet credit does not depend on a queue worker being online.
  */
 class ProcessPaymongoWebhook implements ShouldQueue
 {
@@ -34,7 +34,7 @@ class ProcessPaymongoWebhook implements ShouldQueue
         $this->onQueue('payments');
     }
 
-    public function handle(WalletService $wallet): void
+    public function handle(TopupSettlementService $settlement, WalletService $wallet): void
     {
         $type = $this->event['data']['attributes']['type'] ?? null;
         $data = $this->event['data']['attributes']['data'] ?? null;
@@ -48,7 +48,7 @@ class ProcessPaymongoWebhook implements ShouldQueue
         $metadata   = $attributes['metadata'] ?? [];
         $topupId    = $metadata['topup_id'] ?? null;
 
-        $topup = $topupId ? Topup::find($topupId) : $this->resolveTopupFromGateway($attributes);
+        $topup = $topupId ? Topup::find($topupId) : $this->resolveTopupFromGateway($data, $attributes);
 
         if (! $topup) {
             Log::warning('paymongo.webhook.topup_not_found', [
@@ -58,7 +58,6 @@ class ProcessPaymongoWebhook implements ShouldQueue
             return;
         }
 
-        // Already processed — webhooks can be retried by PayMongo.
         if ($topup->status === 'succeeded') {
             return;
         }
@@ -66,7 +65,7 @@ class ProcessPaymongoWebhook implements ShouldQueue
         match ($type) {
             'payment.paid',
             'checkout_session.payment.paid',
-            'source.chargeable' => $this->handlePaid($wallet, $topup, $attributes),
+            'source.chargeable' => $this->handlePaid($settlement, $topup, $data, $attributes),
 
             'payment.failed' => $wallet->markTopupFailed(
                 $topup,
@@ -77,65 +76,57 @@ class ProcessPaymongoWebhook implements ShouldQueue
         };
     }
 
-    protected function handlePaid($wallet, Topup $topup, array $attributes): void
-    {
-        $user = $topup->user ?? User::find($topup->user_id);
-        if (! $user) {
-            Log::warning('paymongo.webhook.user_missing', ['topup_id' => $topup->id]);
+    /**
+     * @param  array<string, mixed>  $data        Nested resource (`payment` or `checkout_session`)
+     * @param  array<string, mixed>  $attributes  Resource attributes
+     */
+    protected function handlePaid(
+        TopupSettlementService $settlement,
+        Topup $topup,
+        array $data,
+        array $attributes,
+    ): void {
+        // Checkout session webhooks embed payments[]; payment webhooks are the payment itself.
+        $payment = null;
+        if (($data['type'] ?? null) === 'checkout_session' || isset($attributes['payments'])) {
+            $payment = app(\App\Services\PayMongoService::class)->findPaidPayment($data)
+                ?? (isset($attributes['payments'][0]) ? $attributes['payments'][0] : null);
+        }
+
+        if (! $payment && (($data['type'] ?? null) === 'payment' || isset($attributes['status']))) {
+            $payment = $data;
+        }
+
+        if (! $payment) {
+            // Fall back to retrieving the checkout session from PayMongo.
+            $settlement->settleFromGateway($topup);
             return;
         }
 
-        // Pull authoritative amount from gateway, ignore client-sent value.
-        $gatewayAmountCentavos = $attributes['amount'] ?? null;
-        if ($gatewayAmountCentavos !== null) {
-            $gatewayAmount = round(((int) $gatewayAmountCentavos) / 100, 2);
-            if (abs($gatewayAmount - (float) $topup->amount) > 0.01) {
-                Log::warning('paymongo.webhook.amount_mismatch', [
-                    'topup_id'  => $topup->id,
-                    'expected'  => $topup->amount,
-                    'received'  => $gatewayAmount,
-                ]);
-                $wallet->markTopupFailed($topup, 'amount_mismatch');
-                return;
-            }
-        }
-
-        $tx = $wallet->creditTopup($user, [
-            'channel'            => $topup->channel,
-            'amount'             => $topup->amount,
-            'idempotency_key'    => $topup->idempotency_key,
-            'gateway'            => 'paymongo',
-            'gateway_intent_id'  => $topup->gateway_intent_id,
-            'gateway_payment_id' => $attributes['id'] ?? $topup->gateway_payment_id,
-            'metadata'           => [
-                'paymongo_event_id' => $this->event['data']['id'] ?? null,
-                'gateway_payload'   => $attributes,
-            ],
-            'description' => 'Top-up via PayMongo ('.$topup->channel.')',
-        ]);
-
-        $topup->forceFill([
-            'status'                => 'succeeded',
-            'gateway_payment_id'    => $attributes['id'] ?? $topup->gateway_payment_id,
-            'wallet_transaction_id' => $tx->id,
-            'paid_at'               => now(),
-        ])->save();
-
-        $user->notify(new \App\Notifications\Wallet\WalletTopupSuccess($topup->fresh(), $tx));
+        $settlement->creditFromPaidPayment($topup, $payment);
     }
 
     /**
-     * Fallback when metadata.topup_id is missing — try to find a topup
-     * by the gateway-supplied IDs.
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $attributes
      */
-    protected function resolveTopupFromGateway(array $attributes): ?Topup
+    protected function resolveTopupFromGateway(array $data, array $attributes): ?Topup
     {
-        $intentId  = $attributes['payment_intent_id'] ?? null;
-        $paymentId = $attributes['id'] ?? null;
+        $sessionId = ($data['type'] ?? null) === 'checkout_session'
+            ? ($data['id'] ?? null)
+            : null;
+        $intentId  = $attributes['payment_intent_id']
+            ?? ($attributes['payment_intent']['id'] ?? null)
+            ?? $sessionId;
+        $paymentId = $attributes['id'] ?? ($data['id'] ?? null);
 
         return Topup::query()
+            ->when($sessionId, fn ($q) => $q->orWhere('gateway_intent_id', $sessionId))
             ->when($intentId,  fn ($q) => $q->orWhere('gateway_intent_id', $intentId))
             ->when($paymentId, fn ($q) => $q->orWhere('gateway_payment_id', $paymentId))
+            ->when($attributes['reference_number'] ?? null, function ($q) use ($attributes) {
+                $q->orWhere('reference_no', $attributes['reference_number']);
+            })
             ->latest()
             ->first();
     }

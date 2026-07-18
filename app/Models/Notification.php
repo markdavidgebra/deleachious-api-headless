@@ -12,7 +12,6 @@ class Notification extends Model
     protected $fillable = [
         'sent_by',
         'user_id',
-        'loyalty_tier_id',
         'title',
         'body',
         'type',
@@ -37,12 +36,6 @@ class Notification extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
-    }
-
-    // Specific tier it was sent to
-    public function loyaltyTier()
-    {
-        return $this->belongsTo(LoyaltyTier::class);
     }
 
     // Check if read

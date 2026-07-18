@@ -16,14 +16,15 @@ class User extends Authenticatable
         'email',
         'password',
         'phone',
+        'avatar_path',
         'points',
-        'loyalty_tier_id',
         'fcm_token',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        'avatar_path',
     ];
 
     protected $casts = [
@@ -32,57 +33,16 @@ class User extends Authenticatable
         'points' => 'integer',
     ];
 
-    // Always include the loyalty tier on the user payload so the mobile app
-    // can render tier name/colour/discount without an extra round trip.
-    protected $with = ['loyaltyTier'];
+    // Expose a ready-to-use storage path on every JSON response
+    protected $appends = ['avatar_url'];
 
-    // Computed fields exposed on JSON responses
-    protected $appends = ['next_tier', 'points_to_next_tier', 'progress_to_next_tier'];
-
-    // Relationships
-    public function loyaltyTier()
+    public function getAvatarUrlAttribute(): ?string
     {
-        return $this->belongsTo(LoyaltyTier::class);
-    }
-
-    // ── Computed Accessors ───────────────────────────────────────────
-    // Resolve the next loyalty tier (smallest min_points strictly greater
-    // than the user's current points). Returns null when the user is at
-    // the top tier already.
-    public function getNextTierAttribute(): ?LoyaltyTier
-    {
-        return LoyaltyTier::where('min_points', '>', (int) $this->points)
-            ->orderBy('min_points')
-            ->first();
-    }
-
-    // Number of points still needed to reach the next tier (0 at top tier).
-    public function getPointsToNextTierAttribute(): int
-    {
-        $next = $this->next_tier;
-        if (! $next) {
-            return 0;
+        if (! $this->avatar_path) {
+            return null;
         }
 
-        return max(0, $next->min_points - (int) $this->points);
-    }
-
-    // Percentage progress from the current tier threshold towards the next.
-    // Capped at 100. Returns 100 when there is no next tier.
-    public function getProgressToNextTierAttribute(): float
-    {
-        $next    = $this->next_tier;
-        $current = $this->loyaltyTier;
-
-        if (! $next) {
-            return 100.0;
-        }
-
-        $base  = $current ? (int) $current->min_points : 0;
-        $span  = max(1, $next->min_points - $base);
-        $into  = max(0, (int) $this->points - $base);
-
-        return round(min(100, ($into / $span) * 100), 2);
+        return '/storage/' . ltrim($this->avatar_path, '/');
     }
 
     public function loyaltyPoints()
@@ -116,17 +76,5 @@ class User extends Authenticatable
     public function qrCode()
     {
         return $this->morphOne(QrCode::class, 'qrable');
-    }
-
-    // Auto update tier based on points
-    public function updateTier()
-    {
-        $tier = LoyaltyTier::where('min_points', '<=', $this->points)
-            ->orderByDesc('min_points')
-            ->first();
-
-        if ($tier) {
-            $this->update(['loyalty_tier_id' => $tier->id]);
-        }
     }
 }

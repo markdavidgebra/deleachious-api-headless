@@ -41,7 +41,7 @@ class WalletController extends Controller
             'per_page'  => 'nullable|integer|min:1|max:200',
         ]);
 
-        $query = WalletTransaction::with(['wallet.user', 'branch'])
+        $query = WalletTransaction::with(['wallet.user', 'branch', 'source'])
             ->when($request->type,      fn ($q, $t) => $q->where('transaction_type', $t))
             ->when($request->status,    fn ($q, $s) => $q->where('status', $s))
             ->when($request->wallet_id, fn ($q, $id) => $q->where('wallet_id', $id))
@@ -51,15 +51,47 @@ class WalletController extends Controller
             ->when($request->to,        fn ($q, $d) => $q->whereDate('created_at', '<=', $d))
             ->orderByDesc('created_at');
 
-        return response()->json($query->paginate($request->per_page ?? 25));
+        $paginator = $query->paginate($request->per_page ?? 25);
+
+        $paginator->getCollection()->transform(function (WalletTransaction $tx) {
+            $meta = is_array($tx->metadata) ? $tx->metadata : [];
+            $paymongoPaymentId = $meta['paymongo_payment_id']
+                ?? $meta['gateway_payment_id']
+                ?? ($tx->source instanceof Topup ? $tx->source->gateway_payment_id : null);
+
+            if (! $paymongoPaymentId && $tx->transaction_type === 'topup') {
+                $paymongoPaymentId = Topup::where('wallet_transaction_id', $tx->id)
+                    ->value('gateway_payment_id');
+            }
+
+            $tx->setAttribute('paymongo_payment_id', $paymongoPaymentId);
+            $tx->setAttribute('gateway_payment_id', $paymongoPaymentId);
+
+            return $tx;
+        });
+
+        return response()->json($paginator);
     }
 
     // GET /admin/wallet/transactions/{transaction}
     public function showTransaction(WalletTransaction $transaction)
     {
-        return response()->json(
-            $transaction->load(['wallet.user', 'branch']),
-        );
+        $transaction->load(['wallet.user', 'branch', 'source']);
+
+        $meta = is_array($transaction->metadata) ? $transaction->metadata : [];
+        $paymongoPaymentId = $meta['paymongo_payment_id']
+            ?? $meta['gateway_payment_id']
+            ?? ($transaction->source instanceof Topup ? $transaction->source->gateway_payment_id : null);
+
+        if (! $paymongoPaymentId && $transaction->transaction_type === 'topup') {
+            $paymongoPaymentId = Topup::where('wallet_transaction_id', $transaction->id)
+                ->value('gateway_payment_id');
+        }
+
+        $transaction->setAttribute('paymongo_payment_id', $paymongoPaymentId);
+        $transaction->setAttribute('gateway_payment_id', $paymongoPaymentId);
+
+        return response()->json($transaction);
     }
 
     // GET /admin/wallet/users/{user}

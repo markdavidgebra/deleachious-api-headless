@@ -90,14 +90,10 @@ class LoyaltyPointSettingController extends Controller
         // Update total points
         $user->increment('points', $request->points);
 
-        // Update tier automatically
-        $user->updateTier();
-
         return response()->json([
             'message'        => 'Points adjusted successfully',
             'points_changed' => $request->points,
             'new_total'      => $user->fresh()->points,
-            'tier'           => $user->fresh()->loyaltyTier,
         ]);
     }
 
@@ -137,7 +133,6 @@ class LoyaltyPointSettingController extends Controller
 
             // Deduct from user
             $user->decrement('points', $point->points);
-            $user->updateTier();
 
             $totalExpired += $point->points;
         }
@@ -158,7 +153,6 @@ class LoyaltyPointSettingController extends Controller
 
         return response()->json([
             'user'          => $user->only(['id', 'name', 'email', 'points']),
-            'tier'          => $user->loyaltyTier,
             'total_points'  => $user->points,
             'history'       => $history,
         ]);

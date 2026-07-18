@@ -37,7 +37,7 @@ class PaymongoWebhookController extends Controller
             'type'     => $type,
         ]);
 
-        ProcessPaymongoWebhook::dispatch($event);
+        ProcessPaymongoWebhook::dispatchSync($event);
 
         return response()->json(['received' => true]);
     }

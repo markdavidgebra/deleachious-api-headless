@@ -6,12 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\OrderItemAddon;
-use App\Models\LoyaltyPoint;
 use App\Models\LoyaltyPointSetting;
 use Illuminate\Http\Request;
 use App\Services\AuditLogService;
+use App\Services\LoyaltyPointsService;
+
 class OrderController extends Controller
 {
+    public function __construct(
+        protected LoyaltyPointsService $loyaltyPoints,
+    ) {}
+
     // GET all orders
     public function index(Request $request)
     {
@@ -157,26 +162,19 @@ class OrderController extends Controller
             $order
         );
 
-        // Award points when order is completed
+        // Fallback award for walk-in / admin orders that were not paid via app checkout.
+        // Idempotent — app wallet checkouts already awarded points at payment time.
+        $pointsAward = ['awarded' => false, 'points' => 0, 'total_points' => null];
         if ($request->status === 'completed' && $order->user_id && $order->points_earned > 0) {
-            $user = $order->user;
-
-            LoyaltyPoint::create([
-                'user_id'        => $user->id,
-                'points'         => $order->points_earned,
-                'type'           => 'earned',
-                'description'    => 'Points earned from Order ' . $order->order_number,
-                'reference_type' => Order::class,
-                'reference_id'   => $order->id,
-            ]);
-
-            $user->increment('points', $order->points_earned);
-            $user->updateTier();
+            $pointsAward = $this->loyaltyPoints->awardForOrder($order->fresh());
         }
 
         return response()->json([
-            'message' => 'Order status updated to ' . $request->status,
-            'order'   => $order->load(['user', 'items.addons', 'transaction']),
+            'message'        => 'Order status updated to ' . $request->status,
+            'order'          => $order->load(['user', 'items.addons', 'transaction']),
+            'points_awarded' => (int) $pointsAward['points'],
+            'points_newly_credited' => (bool) $pointsAward['awarded'],
+            'points_total'   => $pointsAward['total_points'],
         ]);
     }
 

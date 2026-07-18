@@ -14,9 +14,8 @@ class NotificationController extends Controller
         $user = $request->user();
 
         $notifications = Notification::where(function ($q) use ($user) {
-                $q->where('user_id', $user->id)        // sent to this user
-                  ->orWhere('target', 'all')             // or broadcast
-                  ->orWhere('loyalty_tier_id', $user->loyalty_tier_id); // or their tier
+                $q->where('user_id', $user->id)
+                  ->orWhere('target', 'all');
             })
             ->orderByDesc('created_at')
             ->get();
@@ -42,8 +41,7 @@ class NotificationController extends Controller
 
         Notification::where(function ($q) use ($user) {
                 $q->where('user_id', $user->id)
-                  ->orWhere('target', 'all')
-                  ->orWhere('loyalty_tier_id', $user->loyalty_tier_id);
+                  ->orWhere('target', 'all');
             })
             ->whereNull('read_at')
             ->update(['read_at' => now()]);

@@ -42,33 +42,41 @@ class PayMongoService
         // PayMongo wants amounts in centavos (smallest currency unit).
         $amountCentavos = (int) round(((float) $topup->amount) * 100);
 
+        $attributes = [
+            'send_email_receipt'   => false,
+            'show_description'     => true,
+            'show_line_items'      => true,
+            'description'          => 'Daleachious Wallet Top-up',
+            'reference_number'     => $topup->reference_no,
+            'success_url'          => $successUrl,
+            'cancel_url'           => $cancelUrl,
+            'payment_method_types' => $this->channelToPaymentMethods($topup->channel),
+            'line_items'           => [[
+                'name'     => 'Wallet Top-up',
+                'amount'   => $amountCentavos,
+                'currency' => $topup->currency ?: 'PHP',
+                'quantity' => 1,
+            ]],
+            'metadata' => [
+                'topup_id'     => (string) $topup->id,
+                'wallet_id'    => (string) $topup->wallet_id,
+                'user_id'      => (string) $topup->user_id,
+                'reference_no' => $topup->reference_no,
+            ],
+        ];
+
+        // Prefill PayMongo Customer Information from the logged-in user.
+        $billing = $this->billingFromTopup($topup);
+        if ($billing) {
+            $attributes['billing'] = $billing;
+        }
+
         $response = Http::withBasicAuth($this->secretKey, '')
             ->acceptJson()
             ->asJson()
             ->post($this->baseUrl . '/checkout_sessions', [
                 'data' => [
-                    'attributes' => [
-                        'send_email_receipt' => false,
-                        'show_description'   => true,
-                        'show_line_items'    => true,
-                        'description'        => 'Daleachious Wallet Top-up',
-                        'reference_number'   => $topup->reference_no,
-                        'success_url'        => $successUrl,
-                        'cancel_url'         => $cancelUrl,
-                        'payment_method_types' => $this->channelToPaymentMethods($topup->channel),
-                        'line_items' => [[
-                            'name'     => 'Wallet Top-up',
-                            'amount'   => $amountCentavos,
-                            'currency' => $topup->currency ?: 'PHP',
-                            'quantity' => 1,
-                        ]],
-                        'metadata' => [
-                            'topup_id'      => (string) $topup->id,
-                            'wallet_id'     => (string) $topup->wallet_id,
-                            'user_id'       => (string) $topup->user_id,
-                            'reference_no'  => $topup->reference_no,
-                        ],
-                    ],
+                    'attributes' => $attributes,
                 ],
             ]);
 
@@ -92,6 +100,90 @@ class PayMongoService
             'id'           => $payload['id'] ?? '',
             'checkout_url' => $payload['attributes']['checkout_url'] ?? '',
         ];
+    }
+
+    /**
+     * Build PayMongo billing fields so Name / Email (and phone when present)
+     * are pre-filled on the hosted checkout Customer Information step.
+     *
+     * @return array{name?: string, email?: string, phone?: string}|null
+     */
+    protected function billingFromTopup(Topup $topup): ?array
+    {
+        $user = $topup->relationLoaded('user')
+            ? $topup->user
+            : $topup->user()->first();
+
+        if (! $user) {
+            return null;
+        }
+
+        $billing = [];
+
+        $name = trim((string) ($user->name ?? ''));
+        if ($name !== '') {
+            $billing['name'] = $name;
+        }
+
+        $email = trim((string) ($user->email ?? ''));
+        if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $billing['email'] = $email;
+        }
+
+        $phone = trim((string) ($user->phone ?? ''));
+        if ($phone !== '') {
+            $billing['phone'] = $phone;
+        }
+
+        return $billing === [] ? null : $billing;
+    }
+
+    /**
+     * Retrieve a Checkout Session (includes `payments` when using the secret key).
+     *
+     * @return array<string, mixed>
+     */
+    public function retrieveCheckoutSession(string $checkoutSessionId): array
+    {
+        $this->assertConfigured();
+
+        $response = Http::withBasicAuth($this->secretKey, '')
+            ->acceptJson()
+            ->get($this->baseUrl . '/checkout_sessions/' . $checkoutSessionId);
+
+        if ($response->failed()) {
+            Log::error('paymongo.checkout.retrieve_failed', [
+                'checkout_session_id' => $checkoutSessionId,
+                'status'              => $response->status(),
+                'body'                => $response->json(),
+            ]);
+
+            throw new WalletException(
+                'Failed to verify payment status.',
+                'paymongo_retrieve_failed',
+                502,
+                ['gateway' => $response->json()],
+            );
+        }
+
+        return $response->json('data') ?? [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $checkoutSession  PayMongo checkout session `data` object
+     * @return array<string, mixed>|null  Paid payment resource, if any
+     */
+    public function findPaidPayment(array $checkoutSession): ?array
+    {
+        $payments = $checkoutSession['attributes']['payments'] ?? [];
+
+        foreach ($payments as $payment) {
+            if (($payment['attributes']['status'] ?? null) === 'paid') {
+                return $payment;
+            }
+        }
+
+        return null;
     }
 
     /**

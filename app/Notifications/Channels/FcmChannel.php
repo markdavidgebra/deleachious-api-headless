@@ -30,15 +30,14 @@ class FcmChannel
             if (is_array($payload)) {
                 try {
                     NotificationModel::create([
-                        'sent_by'         => null,
-                        'user_id'         => $notifiable->id ?? null,
-                        'loyalty_tier_id' => null,
-                        'title'           => $payload['title'] ?? 'Wallet update',
-                        'body'            => $payload['body']  ?? '',
-                        'type'            => $payload['type']  ?? 'general',
-                        'data'            => $payload['data']  ?? null,
-                        'target'          => 'specific_user',
-                        'sent_count'      => 0,
+                        'sent_by'    => null,
+                        'user_id'    => $notifiable->id ?? null,
+                        'title'      => $payload['title'] ?? 'Wallet update',
+                        'body'       => $payload['body']  ?? '',
+                        'type'       => $payload['type']  ?? 'general',
+                        'data'       => $payload['data']  ?? null,
+                        'target'     => 'specific_user',
+                        'sent_count' => 0,
                     ]);
                 } catch (\Throwable $e) {
                     \Log::warning('wallet.notification.persist_failed', [

@@ -207,7 +207,6 @@ class QrController extends Controller
         ]);
 
         $user->increment('points', $points);
-        $user->updateTier();
 
         QrScan::create([
             'qr_code_id'      => $qr->id,
@@ -219,14 +218,13 @@ class QrController extends Controller
             'notes'           => $points . ' points awarded to ' . $user->name,
         ]);
 
-        $freshUser = $user->fresh()->load('loyaltyTier');
+        $freshUser = $user->fresh();
 
         return [
             'result'        => 'success',
             'message'       => $points . ' points awarded successfully!',
             'points_earned' => $points,
             'total_points'  => $freshUser->points,
-            'tier'          => $freshUser->loyaltyTier,
             'user'          => $user->only(['id', 'name', 'email']),
         ];
     }
@@ -285,7 +283,6 @@ class QrController extends Controller
         ]);
 
         $user->decrement('points', $reward->points_required);
-        $user->updateTier();
 
         $redemption = Redemption::create([
             'user_id'     => $user->id,

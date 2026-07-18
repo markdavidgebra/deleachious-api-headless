@@ -40,6 +40,7 @@ class WalletTopupSuccess extends Notification implements ShouldQueue
             'data'  => [
                 'topup_reference'       => $this->topup->reference_no,
                 'transaction_reference' => $this->transaction->reference_no,
+                'paymongo_payment_id'   => $this->topup->gateway_payment_id,
                 'amount'                => (float) $this->topup->amount,
                 'balance_after'         => (float) $this->transaction->balance_after,
             ],
@@ -61,10 +62,11 @@ class WalletTopupSuccess extends Notification implements ShouldQueue
             'Wallet topped up',
             'Your wallet was topped up with ₱'.number_format((float) $this->topup->amount, 2).'.',
             [
-                'kind'       => 'wallet_topup',
-                'reference'  => $this->topup->reference_no,
-                'amount'     => (string) $this->topup->amount,
-                'balance'    => (string) $this->transaction->balance_after,
+                'kind'                => 'wallet_topup',
+                'reference'           => $this->topup->reference_no,
+                'paymongo_payment_id' => (string) ($this->topup->gateway_payment_id ?? ''),
+                'amount'              => (string) $this->topup->amount,
+                'balance'             => (string) $this->transaction->balance_after,
             ],
         );
     }

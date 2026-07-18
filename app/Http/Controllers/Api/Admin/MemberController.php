@@ -13,7 +13,7 @@ class MemberController extends Controller
     // GET all members
     public function index()
     {
-        $members = User::with('loyaltyTier')
+        $members = User::query()
             ->orderByDesc('points')
             ->get();
 
@@ -24,7 +24,7 @@ class MemberController extends Controller
     public function show(User $user)
     {
         return response()->json(
-            $user->load(['loyaltyTier', 'loyaltyPoints', 'redemptions.reward'])
+            $user->load(['loyaltyPoints', 'redemptions.reward'])
         );
     }
 
@@ -48,9 +48,6 @@ class MemberController extends Controller
         // Update user total points
         $user->increment('points', $request->points);
 
-        // Update tier
-        $user->updateTier();
-
         AuditLogService::log(
             'adjusted',
             'member',
@@ -60,7 +57,7 @@ class MemberController extends Controller
 
         return response()->json([
             'message' => 'Points adjusted successfully',
-            'user'    => $user->fresh()->load('loyaltyTier'),
+            'user'    => $user->fresh(),
         ]);
     }
 
