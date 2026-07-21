@@ -70,22 +70,18 @@ class WalletSetting extends Model
         return <<<'MD'
 ## Daleachious Wallet — Terms & Conditions
 
-1. **Closed-loop wallet.** The Daleachious wallet may be used **only** to pay
-   for products and services at official Daleachious coffee-shop branches.
-2. **Non-transferable.** Wallet balance cannot be transferred to other users
-   or to any external party.
-3. **Non-cash redeemable.** Wallet balance cannot be withdrawn as cash, sent
-   to a bank, or moved to any other e-wallet.
-4. **No interest.** The wallet is **not a bank account** and does not earn
-   any form of interest, dividends or yield.
-5. **Prepaid store credits.** Balance is prepaid store credit and is the
-   property of Daleachious until redeemed for products or services.
-6. **Suspension for fraud.** Daleachious may suspend or close any wallet it
-   reasonably suspects of fraudulent or abusive activity.
-7. **Refunds.** Refunds, when approved, are credited back to the wallet
-   balance. Cash refunds are issued only at management's discretion.
-8. **Limits.** Maximum balance, top-up and daily transaction limits apply
-   and may change from time to time.
+1. **Closed-loop stored value.** The Daleachious wallet is prepaid store credit that may be used **only** to pay for physical cafe products and services (dine-in, takeout, or in-branch) at official Daleachious locations and through the official Daleachious app checkout.
+2. **Not digital goods currency.** Wallet balance does **not** unlock digital content, subscriptions, or transferable digital currency. It is solely for real-world cafe purchases.
+3. **Non-transferable.** Wallet balance cannot be transferred to other users or to any external party.
+4. **Non-withdrawable.** Wallet balance cannot be withdrawn as cash, sent to a bank, or moved to any other e-wallet.
+5. **No interest.** The wallet is **not a bank account** and does not earn interest, dividends, or yield.
+6. **Ownership.** Prepaid balance remains Daleachious store credit until redeemed for eligible products or services.
+7. **Top-ups.** Top-ups may be processed via third-party payment providers (for example PayMongo / GCash). Daleachious does not store your full payment credentials.
+8. **Suspension for fraud.** Daleachious may suspend or close any wallet it reasonably suspects of fraudulent or abusive activity.
+9. **Refunds.** Approved refunds are normally credited back to the wallet. Cash refunds, if any, are at management's discretion and subject to applicable law.
+10. **Limits.** Maximum balance, top-up, and daily transaction limits apply and may change from time to time.
+11. **Account deletion.** If you delete your Daleachious account, remaining wallet balance is forfeited and cannot be withdrawn as cash. Personal data is removed or anonymized as described in our Privacy Policy.
+12. **Acceptance.** By topping up or using the wallet, you agree to these Terms and our Privacy Policy.
 MD;
     }
 }

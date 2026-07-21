@@ -179,6 +179,7 @@ Route::prefix('user')->group(function () {
         Route::post('/change-password', [UserAuthController::class, 'changePassword']);
         Route::post('/avatar', [UserAuthController::class, 'uploadAvatar']);
         Route::delete('/avatar', [UserAuthController::class, 'deleteAvatar']);
+        Route::delete('/account', [UserAuthController::class, 'deleteAccount']);
 
         // Notifications
         Route::get('notifications',              [UserNotificationController::class, 'index']);
