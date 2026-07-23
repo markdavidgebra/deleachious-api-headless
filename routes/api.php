@@ -23,6 +23,10 @@ use App\Http\Controllers\Api\Admin\WalletSettingController;
 use App\Http\Controllers\Api\User\OrderController as UserOrderController;
 use App\Http\Controllers\Api\User\WalletController as UserWalletController;
 use App\Http\Controllers\Api\Webhook\PaymongoWebhookController;
+use App\Http\Controllers\DeleteAccountController;
+
+// ── Account deletion (Google Play User Data policy) ─────────────────
+Route::middleware('auth:sanctum')->delete('/account', [DeleteAccountController::class, 'destroy']);
 
 // ── Admin Routes ──────────────────────────────
 Route::prefix('admin')->group(function () {
@@ -179,7 +183,9 @@ Route::prefix('user')->group(function () {
         Route::post('/change-password', [UserAuthController::class, 'changePassword']);
         Route::post('/avatar', [UserAuthController::class, 'uploadAvatar']);
         Route::delete('/avatar', [UserAuthController::class, 'deleteAvatar']);
-        Route::delete('/account', [UserAuthController::class, 'deleteAccount']);
+
+        // Backward-compatible alias — prefer DELETE /api/account
+        Route::delete('/account', [DeleteAccountController::class, 'destroy']);
 
         // Notifications
         Route::get('notifications',              [UserNotificationController::class, 'index']);
