@@ -163,7 +163,7 @@ class OrderController extends Controller
         );
 
         // Fallback award for walk-in / admin orders that were not paid via app checkout.
-        // Idempotent — app wallet checkouts already awarded points at payment time.
+        // Idempotent — PayMongo app checkouts already awarded points at payment time.
         $pointsAward = ['awarded' => false, 'points' => 0, 'total_points' => null];
         if ($request->status === 'completed' && $order->user_id && $order->points_earned > 0) {
             $pointsAward = $this->loyaltyPoints->awardForOrder($order->fresh());

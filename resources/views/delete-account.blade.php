@@ -366,13 +366,12 @@
                     <li>Profile information (name, email, phone number, profile photo)</li>
                     <li>Personal information stored in your account</li>
                     <li>Loyalty points and rewards balance</li>
-                    <li>Wallet balance and active wallet access</li>
                     <li>Saved addresses</li>
                     <li>Push notification tokens and in-app notification history</li>
                     <li>Login sessions and API access tokens</li>
                 </ul>
                 <p class="warning-box">
-                    Account deletion is permanent. Any unused wallet balance or loyalty points will be forfeited and cannot be restored.
+                    Account deletion is permanent. Any unused loyalty points will be forfeited and cannot be restored.
                 </p>
             </section>
 
@@ -384,7 +383,7 @@
                 </p>
                 <ul class="list">
                     <li>Order history</li>
-                    <li>Payment and wallet transaction records</li>
+                    <li>Payment transaction records</li>
                     <li>Refund and financial audit logs</li>
                 </ul>
                 <p>

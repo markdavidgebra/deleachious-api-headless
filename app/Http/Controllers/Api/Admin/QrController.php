@@ -9,12 +9,17 @@ use App\Models\User;
 use App\Models\Order;
 use App\Models\LoyaltyPoint;
 use App\Models\LoyaltyPointSetting;
-use App\Models\Redemption;
 use App\Models\Reward;
+use App\Services\RewardRedemptionService;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class QrController extends Controller
 {
+    public function __construct(
+        protected RewardRedemptionService $redemptions,
+    ) {}
+
     // ── GENERATE QR for a user (loyalty card) ────────────
     public function generateUserQr(User $user)
     {
@@ -265,32 +270,18 @@ class QrController extends Controller
             ];
         }
 
-        if ($user->points < $reward->points_required) {
+        try {
+            $result = $this->redemptions->redeemApproved($user, $reward);
+        } catch (ValidationException $e) {
+            $first = collect($e->errors())->flatten()->first() ?? 'Unable to redeem reward.';
+
             return [
                 'result'           => 'failed',
-                'message'          => 'Not enough points to redeem this reward.',
-                'points_required'  => $reward->points_required,
-                'points_available' => $user->points,
+                'message'          => $first,
+                'points_required'  => (int) $reward->points_required,
+                'points_available' => (int) $user->fresh()->points,
             ];
         }
-
-        // Deduct points
-        LoyaltyPoint::create([
-            'user_id'     => $user->id,
-            'points'      => -$reward->points_required,
-            'type'        => 'redeemed',
-            'description' => 'Redeemed: ' . $reward->name,
-        ]);
-
-        $user->decrement('points', $reward->points_required);
-
-        $redemption = Redemption::create([
-            'user_id'     => $user->id,
-            'reward_id'   => $reward->id,
-            'points_used' => $reward->points_required,
-            'status'      => 'approved',
-            'redeemed_at' => now(),
-        ]);
 
         QrScan::create([
             'qr_code_id'      => $qr->id,
@@ -298,17 +289,17 @@ class QrController extends Controller
             'branch_id'       => $request->branch_id,
             'action'          => 'redeem_reward',
             'result'          => 'success',
-            'points_affected' => -$reward->points_required,
-            'notes'           => 'Redeemed: ' . $reward->name . ' by ' . $user->name,
+            'points_affected' => -$result['redemption']->points_used,
+            'notes'           => 'Redeemed: '.$reward->name.' by '.$user->name,
         ]);
 
         return [
             'result'      => 'success',
             'message'     => 'Reward redeemed successfully!',
-            'reward'      => $reward,
-            'redemption'  => $redemption,
-            'points_used' => $reward->points_required,
-            'points_left' => $user->fresh()->points,
+            'reward'      => $result['reward'],
+            'redemption'  => $result['redemption'],
+            'points_used' => (int) $result['redemption']->points_used,
+            'points_left' => $result['points_left'],
             'user'        => $user->only(['id', 'name', 'email']),
         ];
     }

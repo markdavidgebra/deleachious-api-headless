@@ -6,7 +6,7 @@ use App\Models\Notification as NotificationModel;
 use Illuminate\Notifications\Notification;
 
 /**
- * Hybrid notification channel used by the wallet subsystem.
+ * Hybrid notification channel for push + in-app inbox.
  *
  * - Sends a push via Firebase by delegating to the notification's
  *   `toFcm($notifiable)` method (if defined).
@@ -32,7 +32,7 @@ class FcmChannel
                     NotificationModel::create([
                         'sent_by'    => null,
                         'user_id'    => $notifiable->id ?? null,
-                        'title'      => $payload['title'] ?? 'Wallet update',
+                        'title'      => $payload['title'] ?? 'Notification',
                         'body'       => $payload['body']  ?? '',
                         'type'       => $payload['type']  ?? 'general',
                         'data'       => $payload['data']  ?? null,
@@ -40,7 +40,7 @@ class FcmChannel
                         'sent_count' => 0,
                     ]);
                 } catch (\Throwable $e) {
-                    \Log::warning('wallet.notification.persist_failed', [
+                    \Log::warning('notification.persist_failed', [
                         'reason' => $e->getMessage(),
                         'class'  => get_class($notification),
                     ]);
@@ -54,7 +54,7 @@ class FcmChannel
             try {
                 $notification->toFcm($notifiable);
             } catch (\Throwable $e) {
-                \Log::warning('wallet.notification.push_failed', [
+                \Log::warning('notification.push_failed', [
                     'reason' => $e->getMessage(),
                     'class'  => get_class($notification),
                 ]);

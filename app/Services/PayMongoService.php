@@ -2,18 +2,19 @@
 
 namespace App\Services;
 
-use App\Exceptions\WalletException;
-use App\Models\Topup;
+use App\Exceptions\PaymentException;
+use App\Models\Transaction;
+use App\Models\User;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Thin wrapper around PayMongo's REST API.
  *
- * IMPORTANT: We never touch raw card numbers, CVV or expiry. The mobile
- * app opens the gateway-hosted Checkout URL returned by `createCheckout`,
- * and PayMongo handles all PCI-sensitive data. We only persist opaque
- * gateway IDs (intent / source / payment ids) and the public checkout URL.
+ * IMPORTANT: We never touch raw card numbers, CVV or expiry. Clients open
+ * the gateway-hosted Checkout URL returned by `createOrderCheckout`, and
+ * PayMongo handles all PCI-sensitive data. We only persist opaque gateway
+ * IDs and the public checkout URL.
  */
 class PayMongoService
 {
@@ -29,44 +30,51 @@ class PayMongoService
     }
 
     /**
-     * Create a hosted Checkout Session for a top-up. The mobile app opens
-     * the returned `checkout_url` in a browser/in-app web view; the user
-     * pays there; PayMongo notifies us via webhook on success/failure.
+     * Create a hosted Checkout Session for an order payment.
      *
      * @return array{ id: string, checkout_url: string }
      */
-    public function createCheckout(Topup $topup, string $successUrl, string $cancelUrl): array
-    {
+    public function createOrderCheckout(
+        Transaction $transaction,
+        string $channel,
+        string $successUrl,
+        string $cancelUrl,
+        ?User $user = null,
+    ): array {
         $this->assertConfigured();
 
-        // PayMongo wants amounts in centavos (smallest currency unit).
-        $amountCentavos = (int) round(((float) $topup->amount) * 100);
+        $order = $transaction->relationLoaded('order')
+            ? $transaction->order
+            : $transaction->order()->first();
+
+        $amountCentavos = (int) round(((float) $transaction->amount) * 100);
+        $orderNumber    = $order?->order_number ?? $transaction->reference_number;
 
         $attributes = [
             'send_email_receipt'   => false,
             'show_description'     => true,
             'show_line_items'      => true,
-            'description'          => 'Daleachious Wallet Top-up',
-            'reference_number'     => $topup->reference_no,
+            'description'          => 'Daleachious Order '.$orderNumber,
+            'reference_number'     => $transaction->reference_number,
             'success_url'          => $successUrl,
             'cancel_url'           => $cancelUrl,
-            'payment_method_types' => $this->channelToPaymentMethods($topup->channel),
+            'payment_method_types' => $this->channelToPaymentMethods($channel),
             'line_items'           => [[
-                'name'     => 'Wallet Top-up',
+                'name'     => 'Order '.$orderNumber,
                 'amount'   => $amountCentavos,
-                'currency' => $topup->currency ?: 'PHP',
+                'currency' => 'PHP',
                 'quantity' => 1,
             ]],
             'metadata' => [
-                'topup_id'     => (string) $topup->id,
-                'wallet_id'    => (string) $topup->wallet_id,
-                'user_id'      => (string) $topup->user_id,
-                'reference_no' => $topup->reference_no,
+                'order_id'         => (string) $transaction->order_id,
+                'transaction_id'   => (string) $transaction->id,
+                'user_id'          => (string) ($transaction->user_id ?? ''),
+                'reference_number' => $transaction->reference_number,
+                'purpose'          => 'order_payment',
             ],
         ];
 
-        // Prefill PayMongo Customer Information from the logged-in user.
-        $billing = $this->billingFromTopup($topup);
+        $billing = $this->billingFromUser($user ?? $transaction->user);
         if ($billing) {
             $attributes['billing'] = $billing;
         }
@@ -74,7 +82,7 @@ class PayMongoService
         $response = Http::withBasicAuth($this->secretKey, '')
             ->acceptJson()
             ->asJson()
-            ->post($this->baseUrl . '/checkout_sessions', [
+            ->post($this->baseUrl.'/checkout_sessions', [
                 'data' => [
                     'attributes' => $attributes,
                 ],
@@ -86,7 +94,7 @@ class PayMongoService
                 'body'   => $response->json(),
             ]);
 
-            throw new WalletException(
+            throw new PaymentException(
                 'Failed to create payment session.',
                 'paymongo_checkout_failed',
                 502,
@@ -103,17 +111,10 @@ class PayMongoService
     }
 
     /**
-     * Build PayMongo billing fields so Name / Email (and phone when present)
-     * are pre-filled on the hosted checkout Customer Information step.
-     *
      * @return array{name?: string, email?: string, phone?: string}|null
      */
-    protected function billingFromTopup(Topup $topup): ?array
+    protected function billingFromUser(?User $user): ?array
     {
-        $user = $topup->relationLoaded('user')
-            ? $topup->user
-            : $topup->user()->first();
-
         if (! $user) {
             return null;
         }
@@ -139,8 +140,6 @@ class PayMongoService
     }
 
     /**
-     * Retrieve a Checkout Session (includes `payments` when using the secret key).
-     *
      * @return array<string, mixed>
      */
     public function retrieveCheckoutSession(string $checkoutSessionId): array
@@ -149,7 +148,7 @@ class PayMongoService
 
         $response = Http::withBasicAuth($this->secretKey, '')
             ->acceptJson()
-            ->get($this->baseUrl . '/checkout_sessions/' . $checkoutSessionId);
+            ->get($this->baseUrl.'/checkout_sessions/'.$checkoutSessionId);
 
         if ($response->failed()) {
             Log::error('paymongo.checkout.retrieve_failed', [
@@ -158,7 +157,7 @@ class PayMongoService
                 'body'                => $response->json(),
             ]);
 
-            throw new WalletException(
+            throw new PaymentException(
                 'Failed to verify payment status.',
                 'paymongo_retrieve_failed',
                 502,
@@ -170,8 +169,8 @@ class PayMongoService
     }
 
     /**
-     * @param  array<string, mixed>  $checkoutSession  PayMongo checkout session `data` object
-     * @return array<string, mixed>|null  Paid payment resource, if any
+     * @param  array<string, mixed>  $checkoutSession
+     * @return array<string, mixed>|null
      */
     public function findPaidPayment(array $checkoutSession): ?array
     {
@@ -186,19 +185,11 @@ class PayMongoService
         return null;
     }
 
-    /**
-     * Verify a webhook signature using PayMongo's HMAC-SHA256 scheme.
-     *
-     * The `Paymongo-Signature` header looks like:
-     *     t=1234567890,te=<test-sig>,li=<live-sig>
-     *
-     * Signature payload is `<timestamp>.<rawBody>`.
-     */
     public function verifyWebhookSignature(string $rawBody, ?string $signatureHeader): bool
     {
         if (! $this->webhookSecret) {
-            // Fail closed: never accept webhooks unless a secret is configured.
             Log::error('paymongo.webhook.missing_secret');
+
             return false;
         }
 
@@ -222,19 +213,15 @@ class PayMongoService
             return false;
         }
 
-        // Reject signatures older than 5 minutes to mitigate replay attacks.
         if (abs(time() - (int) $timestamp) > 300) {
             return false;
         }
 
-        $expected = hash_hmac('sha256', $timestamp . '.' . $rawBody, $this->webhookSecret);
+        $expected = hash_hmac('sha256', $timestamp.'.'.$rawBody, $this->webhookSecret);
 
         return hash_equals($expected, $sig);
     }
 
-    /**
-     * Issue a refund on the original payment via PayMongo's refunds API.
-     */
     public function refundPayment(string $paymentId, int $amountCentavos, string $reason = 'requested_by_customer'): array
     {
         $this->assertConfigured();
@@ -242,7 +229,7 @@ class PayMongoService
         $response = Http::withBasicAuth($this->secretKey, '')
             ->acceptJson()
             ->asJson()
-            ->post($this->baseUrl . '/refunds', [
+            ->post($this->baseUrl.'/refunds', [
                 'data' => [
                     'attributes' => [
                         'amount'     => $amountCentavos,
@@ -259,7 +246,7 @@ class PayMongoService
                 'payment_id' => $paymentId,
             ]);
 
-            throw new WalletException(
+            throw new PaymentException(
                 'Failed to issue refund via gateway.',
                 'paymongo_refund_failed',
                 502,
@@ -275,14 +262,15 @@ class PayMongoService
             'card'  => ['card'],
             'gcash' => ['gcash'],
             'maya'  => ['paymaya'],
-            default => ['card', 'gcash', 'paymaya'],
+            'qrph'  => ['qrph'],
+            default => ['card', 'gcash', 'paymaya', 'qrph'],
         };
     }
 
     protected function assertConfigured(): void
     {
         if (! $this->secretKey) {
-            throw new WalletException(
+            throw new PaymentException(
                 'Payment gateway is not configured.',
                 'paymongo_not_configured',
                 503,

@@ -50,23 +50,6 @@ class User extends Authenticatable
         return $this->hasMany(LoyaltyPoint::class);
     }
 
-    // Closed-loop prepaid wallet. Backend is the single source of truth
-    // for the balance — never trust a client-side cached value.
-    public function wallet()
-    {
-        return $this->hasOne(Wallet::class);
-    }
-
-    // Get the user's wallet, creating one on the fly the first time it's
-    // accessed. Eloquent will return the existing row on subsequent calls.
-    public function getOrCreateWallet(): Wallet
-    {
-        return Wallet::firstOrCreate(
-            ['user_id' => $this->id],
-            ['current_balance' => 0, 'currency' => 'PHP', 'status' => 'active']
-        );
-    }
-
     public function redemptions()
     {
         return $this->hasMany(Redemption::class);

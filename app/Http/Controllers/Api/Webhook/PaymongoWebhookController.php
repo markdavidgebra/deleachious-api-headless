@@ -11,9 +11,9 @@ use Illuminate\Support\Facades\Log;
  * Receives PayMongo webhook events.
  *
  * Pipeline:
- *  1. `wallet.paymongo.signature` middleware verifies the signature.
+ *  1. `paymongo.signature` middleware verifies the signature.
  *  2. We persist the raw event to the log (audit trail) and dispatch a
- *     queued job that does the heavy lifting (credit wallet, send receipt).
+ *     job that settles order payment (mark paid, confirm order, award points).
  *  3. We immediately return HTTP 200 — PayMongo retries on non-2xx.
  *
  * Returning fast is critical: PayMongo expects acknowledgement within a

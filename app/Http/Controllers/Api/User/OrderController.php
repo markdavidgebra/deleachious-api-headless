@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers\Api\User;
 
-use App\Exceptions\WalletException;
+use App\Exceptions\PaymentException;
 use App\Http\Controllers\Controller;
 use App\Models\LoyaltyPointSetting;
 use App\Models\Order;
@@ -12,19 +12,19 @@ use App\Models\Product;
 use App\Models\ProductAddon;
 use App\Models\ProductVariant;
 use App\Models\Transaction;
-use App\Services\LoyaltyPointsService;
-use App\Services\WalletService;
+use App\Services\OrderPaymentSettlementService;
+use App\Services\PayMongoService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Mobile-app order checkout. Payment is wallet-only (closed-loop).
+ * Mobile-app order checkout via PayMongo hosted checkout.
  */
 class OrderController extends Controller
 {
     public function __construct(
-        protected WalletService $wallet,
-        protected LoyaltyPointsService $loyaltyPoints,
+        protected PayMongoService $paymongo,
+        protected OrderPaymentSettlementService $settlement,
     ) {}
 
     // GET /user/orders
@@ -50,18 +50,20 @@ class OrderController extends Controller
         );
     }
 
-    // POST /user/orders/checkout
     /**
-     * Create an order and pay it immediately from the user's wallet.
-     * No other payment methods are accepted on this endpoint.
+     * Create a pending order + PayMongo checkout session.
+     * Client opens checkout_url; payment is confirmed via webhook or confirm endpoint.
      */
     public function checkout(Request $request)
     {
         $request->validate([
-            'branch_id' => 'required|exists:branches,id',
-            'type'      => 'nullable|in:dine_in,takeout,delivery',
-            'notes'     => 'nullable|string|max:500',
-            'items'     => 'required|array|min:1',
+            'branch_id'  => 'required|exists:branches,id',
+            'type'       => 'nullable|in:dine_in,takeout,delivery',
+            'notes'      => 'nullable|string|max:500',
+            'channel'    => 'nullable|in:gcash,card,maya,qrph',
+            'success_url'=> 'nullable|url|max:500',
+            'cancel_url' => 'nullable|url|max:500',
+            'items'      => 'required|array|min:1',
             'items.*.product_id'         => 'required|exists:products,id',
             'items.*.product_variant_id' => 'nullable|exists:product_variants,id',
             'items.*.quantity'           => 'required|integer|min:1|max:99',
@@ -70,7 +72,8 @@ class OrderController extends Controller
             'items.*.addons.*.product_addon_id' => 'required|exists:product_addons,id',
         ]);
 
-        $user = $request->user();
+        $user    = $request->user();
+        $channel = $request->input('channel', 'gcash');
 
         try {
             $built = $this->buildItemsPayload($request->items);
@@ -86,8 +89,26 @@ class OrderController extends Controller
         $settings     = LoyaltyPointSetting::getSettings();
         $pointsEarned = $settings->calculatePoints($subtotal);
 
+        $successUrl = $request->input(
+            'success_url',
+            config('services.paymongo.success_url', 'https://daleachious.app/checkout/success')
+        );
+        $cancelUrl = $request->input(
+            'cancel_url',
+            config('services.paymongo.cancel_url', 'https://daleachious.app/checkout/cancel')
+        );
+
         try {
-            $result = DB::transaction(function () use ($request, $user, $subtotal, $itemsData, $pointsEarned) {
+            $result = DB::transaction(function () use (
+                $request,
+                $user,
+                $subtotal,
+                $itemsData,
+                $pointsEarned,
+                $channel,
+                $successUrl,
+                $cancelUrl,
+            ) {
                 $order = Order::create([
                     'order_number'  => Order::generateOrderNumber(),
                     'user_id'       => $user->id,
@@ -118,61 +139,82 @@ class OrderController extends Controller
                     }
                 }
 
-                // Debit closed-loop wallet — only payment mode for app checkout.
-                $walletResult = $this->wallet->debitPurchase($user, [
-                    'amount'          => $subtotal,
-                    'branch_id'       => $request->branch_id,
-                    'order_id'        => $order->id,
-                    'idempotency_key' => $request->header('Idempotency-Key'),
-                    'description'     => 'Order '.$order->order_number,
-                    'metadata'        => [
-                        'ip'         => $request->ip(),
-                        'user_agent' => substr((string) $request->userAgent(), 0, 255),
-                        'source'     => 'app_checkout',
-                    ],
-                ]);
-
                 $transaction = Transaction::create([
                     'reference_number' => Transaction::generateReferenceNumber(),
                     'order_id'         => $order->id,
                     'user_id'          => $user->id,
-                    'payment_method'   => 'wallet',
-                    'status'           => 'paid',
+                    'payment_method'   => $channel,
+                    'gateway'          => 'paymongo',
+                    'status'           => 'pending',
                     'amount'           => $subtotal,
                     'change'           => 0,
-                    'paid_at'          => now(),
                 ]);
 
-                $order->update(['status' => 'confirmed']);
+                $session = $this->paymongo->createOrderCheckout(
+                    $transaction->load('order'),
+                    $channel,
+                    $successUrl,
+                    $cancelUrl,
+                    $user,
+                );
+
+                $transaction->update([
+                    'gateway_checkout_id' => $session['id'],
+                    'checkout_url'        => $session['checkout_url'],
+                ]);
 
                 return [
-                    'order'              => $order->fresh()->load(['items.addons', 'transaction']),
-                    'transaction'        => $transaction,
-                    'wallet_transaction' => $walletResult['transaction'],
-                    'purchase'           => $walletResult['purchase'],
-                    'receipt'            => $this->wallet->buildReceipt($walletResult['transaction']),
+                    'order'       => $order->fresh()->load(['items.addons', 'transaction']),
+                    'transaction' => $transaction->fresh(),
+                    'checkout_url'=> $session['checkout_url'],
                 ];
             });
-        } catch (WalletException $e) {
+        } catch (PaymentException $e) {
             return $e->toResponse();
         }
 
-        // Credit rewards after payment succeeds (outside the wallet txn).
-        $pointsAward = $this->loyaltyPoints->awardForOrder($result['order']);
+        return response()->json([
+            'message'      => 'Order created. Complete payment to confirm.',
+            'order'        => $result['order'],
+            'transaction'  => $result['transaction'],
+            'checkout_url' => $result['checkout_url'],
+        ], 201);
+    }
+
+    /**
+     * Client poll after returning from PayMongo hosted checkout.
+     */
+    public function confirm(Request $request, Order $order)
+    {
+        if ((int) $order->user_id !== (int) $request->user()->id) {
+            return response()->json(['message' => 'Order not found.'], 404);
+        }
+
+        $transaction = $order->transaction;
+        if (! $transaction) {
+            return response()->json([
+                'message'    => 'No payment found for this order.',
+                'error_code' => 'payment_missing',
+            ], 404);
+        }
+
+        try {
+            $result = $this->settlement->settleFromGateway($transaction);
+        } catch (PaymentException $e) {
+            return $e->toResponse();
+        }
+
+        $points = $result['points'];
 
         return response()->json([
-            'message'            => 'Order placed and paid with wallet.',
-            'order'              => $result['order']->fresh()->load(['items.addons', 'transaction']),
-            'transaction'        => $result['transaction'],
-            'wallet_transaction' => $result['wallet_transaction'],
-            'purchase'           => $result['purchase'],
-            'receipt'            => $result['receipt'],
-            // Always report the order's points amount for UI; `awarded` is whether
-            // this request newly credited the member (idempotent on retries).
-            'points_awarded'     => (int) $pointsAward['points'],
-            'points_newly_credited' => (bool) $pointsAward['awarded'],
-            'points_total'       => $pointsAward['total_points'],
-        ], 201);
+            'paid'                  => (bool) $result['paid'] || ($result['transaction']->status === 'paid'),
+            'pending'               => (bool) $result['pending'],
+            'order'                 => ($result['order'] ?? $order)->fresh()->load(['items.addons', 'transaction']),
+            'transaction'           => $result['transaction'],
+            'points_awarded'        => $points ? (int) ($points['points'] ?? 0) : (int) $order->points_earned,
+            'points_newly_credited' => $points ? (bool) ($points['awarded'] ?? false) : false,
+            'points_total'          => $points['total_points'] ?? null,
+        ]);
     }
 
     /**

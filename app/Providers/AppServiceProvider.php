@@ -21,9 +21,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Register the FCM notification channel so wallet notifications
-        // can declare `'fcm'` in their `via()` array. The channel itself
-        // delegates to each notification's toFcm() method.
+        // Register the FCM notification channel so notifications can declare
+        // `'fcm'` in their `via()` array. The channel itself delegates to each
+        // notification's toFcm() method.
         $this->app->resolving(ChannelManager::class, function (ChannelManager $manager) {
             $manager->extend('fcm', fn () => $this->app->make(FcmChannel::class));
         });

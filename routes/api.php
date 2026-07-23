@@ -18,10 +18,10 @@ use App\Http\Controllers\Api\Admin\NotificationController;
 use App\Http\Controllers\Api\User\NotificationController as UserNotificationController;
 use App\Http\Controllers\Api\Admin\AuditLogController;
 use App\Http\Controllers\Api\Admin\ShopSettingController;
-use App\Http\Controllers\Api\Admin\WalletController as AdminWalletController;
-use App\Http\Controllers\Api\Admin\WalletSettingController;
 use App\Http\Controllers\Api\User\OrderController as UserOrderController;
-use App\Http\Controllers\Api\User\WalletController as UserWalletController;
+use App\Http\Controllers\Api\User\RewardController as UserRewardController;
+use App\Http\Controllers\Api\User\RedemptionController as UserRedemptionController;
+use App\Http\Controllers\Api\User\LoyaltyQrController as UserLoyaltyQrController;
 use App\Http\Controllers\Api\Webhook\PaymongoWebhookController;
 use App\Http\Controllers\DeleteAccountController;
 
@@ -113,32 +113,6 @@ Route::prefix('admin')->group(function () {
         Route::get('audit-logs/admin/{adminId}', [AuditLogController::class, 'byAdmin']);
         Route::get('audit-logs/{auditLog}', [AuditLogController::class, 'show']);
         Route::delete('audit-logs/cleanup', [AuditLogController::class, 'cleanup']);
-
-        // ── Wallet (back-office) ──────────────────────────────────────
-        // All read endpoints share a single rate limiter; money-moving
-        // endpoints are individually throttled.
-        Route::prefix('wallet')->group(function () {
-            Route::middleware('throttle:wallet-read')->group(function () {
-                Route::get('summary',                       [AdminWalletController::class, 'summary']);
-                Route::get('transactions',                  [AdminWalletController::class, 'transactions']);
-                Route::get('transactions/{transaction}',    [AdminWalletController::class, 'showTransaction']);
-                Route::get('users/{user}',                  [AdminWalletController::class, 'showUserWallet']);
-                Route::get('users/{user}/history',          [AdminWalletController::class, 'userHistory']);
-                Route::get('refunds',                       [AdminWalletController::class, 'refundsIndex']);
-                Route::get('branches/{branch}/report',      [AdminWalletController::class, 'branchReport']);
-                Route::get('settings',                      [WalletSettingController::class, 'show']);
-            });
-
-            Route::middleware('throttle:wallet-write')->group(function () {
-                Route::post('topup-cash',                          [AdminWalletController::class, 'counterTopup']);
-                Route::post('qr/redeem',                           [AdminWalletController::class, 'redeemQr']);
-                Route::post('adjust',                              [AdminWalletController::class, 'adjust']);
-                Route::post('refunds/{refund}/approve',            [AdminWalletController::class, 'approveRefund']);
-                Route::post('refunds/{refund}/reject',             [AdminWalletController::class, 'rejectRefund']);
-                Route::patch('wallets/{wallet}/status',            [AdminWalletController::class, 'updateWalletStatus']);
-                Route::patch('settings',                           [WalletSettingController::class, 'update']);
-            });
-        });
     });
 });
 
@@ -152,10 +126,8 @@ Route::prefix('user')->group(function () {
 
     // Public read-only support data for the mobile UI
     Route::get('/shop-settings',  fn () => response()->json(\App\Models\ShopSetting::getSettings()));
-    Route::get('/wallet/terms',   [UserWalletController::class, 'terms']);
 
     // Active store/branch directory shown in the mobile Stores tab.
-    // Only public-facing fields are returned (no staff/order counts).
     Route::get('/branches', fn () => response()->json(
         \App\Models\Branch::query()
             ->where('is_active', true)
@@ -193,47 +165,27 @@ Route::prefix('user')->group(function () {
         Route::patch('notifications/read-all',   [UserNotificationController::class, 'markAllRead']);
         Route::patch('notifications/{notification}/read', [UserNotificationController::class, 'markRead']);
 
-        // ── Orders (mobile app — wallet checkout only) ────────────────
+        // ── Orders (PayMongo checkout) ────────────────────────────────
         Route::prefix('orders')->group(function () {
             Route::get('/', [UserOrderController::class, 'index']);
-            Route::middleware(['throttle:wallet-pay', 'wallet.idempotency:purchase'])
+            Route::middleware('throttle:order-checkout')
                 ->post('checkout', [UserOrderController::class, 'checkout']);
+            Route::middleware('throttle:order-confirm')
+                ->post('{order}/confirm', [UserOrderController::class, 'confirm']);
             Route::get('{order}', [UserOrderController::class, 'show']);
         });
 
-        // ── Wallet (mobile app) ───────────────────────────────────────
-        Route::prefix('wallet')->group(function () {
-            // Reads — light throttling.
-            Route::middleware('throttle:wallet-read')->group(function () {
-                Route::get('balance', [UserWalletController::class, 'balance']);
-                Route::get('history', [UserWalletController::class, 'history']);
-            });
-
-            // Top-up: heavy throttle + idempotency required.
-            Route::middleware(['throttle:wallet-topup', 'wallet.idempotency:topup'])
-                ->post('topup', [UserWalletController::class, 'topup']);
-
-            // Confirm after PayMongo checkout (no new charge — sync only).
-            Route::middleware('throttle:wallet-write')
-                ->post('topup/{topup}/confirm', [UserWalletController::class, 'confirmTopup']);
-
-            // Pay & QR: medium throttle + idempotency.
-            Route::middleware(['throttle:wallet-pay', 'wallet.idempotency:purchase'])->group(function () {
-                Route::post('pay',         [UserWalletController::class, 'pay']);
-                Route::post('qr/generate', [UserWalletController::class, 'generateQr']);
-            });
-
-            // Refund requests: write rate-limited, idempotency optional.
-            Route::middleware(['throttle:wallet-write', 'wallet.idempotency:refund'])
-                ->post('refund', [UserWalletController::class, 'requestRefund']);
-        });
+        // ── Rewards / redemptions ─────────────────────────────────────
+        Route::get('rewards', [UserRewardController::class, 'index']);
+        Route::get('redemptions', [UserRedemptionController::class, 'index']);
+        Route::middleware('throttle:order-checkout')
+            ->post('redemptions', [UserRedemptionController::class, 'store']);
+        Route::get('loyalty-qr', [UserLoyaltyQrController::class, 'show']);
     });
 });
 
 // ── Webhooks ──────────────────────────────────────────────────────
-// PayMongo posts here. Signature verification middleware runs first,
-// then the controller dispatches a queued job and returns 200 OK fast.
 Route::prefix('webhooks')->group(function () {
-    Route::middleware(['throttle:paymongo-webhook', 'wallet.paymongo.signature'])
+    Route::middleware(['throttle:paymongo-webhook', 'paymongo.signature'])
         ->post('paymongo', [PaymongoWebhookController::class, 'handle']);
 });
