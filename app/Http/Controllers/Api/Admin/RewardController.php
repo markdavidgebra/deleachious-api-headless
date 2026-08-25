@@ -4,13 +4,22 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Reward;
+use App\Support\AdminPaginator;
 use Illuminate\Http\Request;
 
 class RewardController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        return response()->json(Reward::orderBy('points_required')->get());
+        $query = Reward::query()->orderBy('points_required');
+
+        if (AdminPaginator::requested($request)) {
+            return response()->json(
+                $query->paginate(AdminPaginator::perPage($request))->withQueryString()
+            );
+        }
+
+        return response()->json($query->get());
     }
 
     public function store(Request $request)

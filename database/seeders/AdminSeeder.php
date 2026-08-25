@@ -18,7 +18,7 @@ class AdminSeeder extends Seeder
         // avoids the double-hash trap that older code (bcrypt(...) on a
         // hashed-cast attribute) used to fall into on certain Laravel
         // versions, which is why `Hash::check` would later fail.
-        Admin::updateOrCreate(
+        $admin = Admin::updateOrCreate(
             ['email' => 'admin@daleachious.com'],
             [
                 'name'      => 'Super Admin',
@@ -29,5 +29,21 @@ class AdminSeeder extends Seeder
                 'is_active' => true,
             ]
         );
+
+        $admin->syncNamedRole('super_admin');
+
+        $developer = Admin::updateOrCreate(
+            ['email' => 'developer@daleachious.com'],
+            [
+                'name'      => 'Developer',
+                'password'  => 'Developer@123',
+                'role'      => 'developer',
+                'phone'     => null,
+                'branch_id' => $branch?->id,
+                'is_active' => true,
+            ]
+        );
+
+        $developer->syncNamedRole('developer');
     }
 }

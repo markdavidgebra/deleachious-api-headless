@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Transaction;
 use App\Models\Order;
+use App\Support\AdminBranchScope;
 use Illuminate\Http\Request;
 
 class TransactionController extends Controller
@@ -12,11 +13,19 @@ class TransactionController extends Controller
     // GET all transactions
     public function index(Request $request)
     {
-        $transactions = Transaction::with(['order', 'user'])
-            ->when($request->status,         fn($q) => $q->where('status',         $request->status))
-            ->when($request->payment_method, fn($q) => $q->where('payment_method', $request->payment_method))
+        $perPage = min(max($request->integer('per_page', 25), 1), 100);
+
+        $transactions = Transaction::with(['order.branch', 'user']);
+        AdminBranchScope::applyToTransactions($transactions, $request);
+
+        $transactions = $transactions
+            ->when($request->status,         fn ($q) => $q->where('status',         $request->status))
+            ->when($request->payment_method, fn ($q) => $q->where('payment_method', $request->payment_method))
+            ->when($request->from,           fn ($q) => $q->whereDate('created_at', '>=', $request->from))
+            ->when($request->to,             fn ($q) => $q->whereDate('created_at', '<=', $request->to))
             ->orderByDesc('created_at')
-            ->get();
+            ->paginate($perPage)
+            ->withQueryString();
 
         return response()->json($transactions);
     }
@@ -24,8 +33,10 @@ class TransactionController extends Controller
     // GET single transaction
     public function show(Transaction $transaction)
     {
+        AdminBranchScope::assertTransaction($transaction);
+
         return response()->json(
-            $transaction->load(['order.items.addons', 'user'])
+            $transaction->load(['order.items.addons', 'order.branch', 'user'])
         );
     }
 
@@ -41,6 +52,7 @@ class TransactionController extends Controller
         ]);
 
         $order = Order::findOrFail($request->order_id);
+        AdminBranchScope::assertOrder($order);
 
         // Check if already paid
         if ($order->transaction && $order->transaction->status === 'paid') {
@@ -73,6 +85,8 @@ class TransactionController extends Controller
     // REFUND a transaction
     public function refund(Transaction $transaction)
     {
+        AdminBranchScope::assertTransaction($transaction);
+
         if ($transaction->status === 'refunded') {
             return response()->json([
                 'message' => 'Transaction already refunded.',
@@ -96,9 +110,12 @@ class TransactionController extends Controller
             'to'   => 'nullable|date',
         ]);
 
-        $query = Transaction::where('status', 'paid')
-            ->when($request->from, fn($q) => $q->whereDate('paid_at', '>=', $request->from))
-            ->when($request->to,   fn($q) => $q->whereDate('paid_at', '<=', $request->to));
+        $query = Transaction::where('status', 'paid');
+        AdminBranchScope::applyToTransactions($query, $request);
+
+        $query = $query
+            ->when($request->from, fn ($q) => $q->whereDate('paid_at', '>=', $request->from))
+            ->when($request->to,   fn ($q) => $q->whereDate('paid_at', '<=', $request->to));
 
         return response()->json([
             'total_sales'        => $query->sum('amount'),

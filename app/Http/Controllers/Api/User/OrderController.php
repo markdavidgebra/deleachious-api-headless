@@ -51,6 +51,48 @@ class OrderController extends Controller
     }
 
     /**
+     * Pickup / serve QR for a ready order. Staff scan this to complete it.
+     */
+    public function pickupQr(Request $request, Order $order)
+    {
+        if ((int) $order->user_id !== (int) $request->user()->id) {
+            return response()->json(['message' => 'Order not found.'], 404);
+        }
+
+        if ($order->status === 'completed') {
+            return response()->json([
+                'message' => 'This order is already completed.',
+            ], 422);
+        }
+
+        if ($order->status === 'cancelled') {
+            return response()->json([
+                'message' => 'This order was cancelled.',
+            ], 422);
+        }
+
+        if ($order->status !== 'ready') {
+            return response()->json([
+                'message' => 'Show this QR when your order is ready.',
+            ], 422);
+        }
+
+        $qr = $order->ensurePickupQr(120);
+
+        return response()->json([
+            'qr_code' => [
+                'id'         => $qr->id,
+                'code'       => $qr->code,
+                'type'       => $qr->type,
+                'purpose'    => $qr->purpose,
+                'is_active'  => $qr->is_active,
+                'expires_at' => $qr->expires_at,
+            ],
+            'order' => $order->only(['id', 'order_number', 'status', 'type', 'total']),
+        ]);
+    }
+
+    /**
      * Create a pending order + PayMongo checkout session.
      * Client opens checkout_url; payment is confirmed via webhook or confirm endpoint.
      */

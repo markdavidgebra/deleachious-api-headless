@@ -26,6 +26,12 @@ class RedemptionController extends Controller
             ->limit(50)
             ->get();
 
+        $items->each(function ($item) {
+            if ($item->status === 'pending') {
+                $item->setRelation('qrCode', $this->redemptions->ensureRedemptionQr($item));
+            }
+        });
+
         return response()->json([
             'redemptions' => $items,
             'points'      => (int) ($request->user()->points ?? 0),
@@ -59,8 +65,9 @@ class RedemptionController extends Controller
         }
 
         return response()->json([
-            'message'     => 'Redemption requested. Show this at the counter for staff to fulfill.',
-            'redemption'  => $result['redemption'],
+            'message'     => 'Redemption requested. Show this QR at the counter for staff to scan.',
+            'redemption'  => $result['redemption']->loadMissing('qrCode'),
+            'qr_code'     => $result['qr_code'] ?? $result['redemption']->qrCode,
             'reward'      => $result['reward'],
             'points_used' => (int) $result['redemption']->points_used,
             'points_left' => $result['points_left'],

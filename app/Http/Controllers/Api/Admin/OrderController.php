@@ -10,6 +10,7 @@ use App\Models\LoyaltyPointSetting;
 use Illuminate\Http\Request;
 use App\Services\AuditLogService;
 use App\Services\LoyaltyPointsService;
+use App\Support\AdminBranchScope;
 
 class OrderController extends Controller
 {
@@ -20,9 +21,12 @@ class OrderController extends Controller
     // GET all orders
     public function index(Request $request)
     {
-        $orders = Order::with(['user', 'items.addons', 'transaction'])
-            ->when($request->status, fn($q) => $q->where('status', $request->status))
-            ->when($request->type,   fn($q) => $q->where('type',   $request->type))
+        $orders = Order::with(['user', 'items.addons', 'transaction', 'branch']);
+        AdminBranchScope::applyToOrders($orders, $request);
+
+        $orders = $orders
+            ->when($request->status, fn ($q) => $q->where('status', $request->status))
+            ->when($request->type,   fn ($q) => $q->where('type',   $request->type))
             ->orderByDesc('created_at')
             ->get();
 
@@ -34,6 +38,7 @@ class OrderController extends Controller
     {
         $request->validate([
             'user_id'       => 'nullable|exists:users,id',
+            'branch_id'     => 'nullable|exists:branches,id',
             'type'          => 'required|in:dine_in,takeout,delivery',
             'notes'         => 'nullable|string',
             'items'         => 'required|array|min:1',
@@ -96,11 +101,21 @@ class OrderController extends Controller
             ? $settings->calculatePoints($subtotal)
             : 0;
 
+        $branchId = AdminBranchScope::resolveWriteBranchId(
+            $request->filled('branch_id') ? $request->integer('branch_id') : null
+        );
+
+        if (AdminBranchScope::isLocked() && ! $branchId) {
+            return response()->json([
+                'message' => 'This account is not assigned to a branch.',
+            ], 422);
+        }
+
         // Create the order
         $order = Order::create([
             'order_number'  => Order::generateOrderNumber(),
             'user_id'       => $request->user_id,
-            'branch_id'     => $request->branch_id,
+            'branch_id'     => $branchId,
             'handled_by'    => auth()->id(),
             'type'          => $request->type,
             'status'        => 'pending',
@@ -130,7 +145,7 @@ class OrderController extends Controller
         }
         AuditLogService::created('order', $order, 'Order created: ' . $order->order_number);
         return response()->json(
-            $order->load(['user', 'items.addons', 'transaction']),
+            $order->load(['user', 'items.addons', 'transaction', 'branch']),
             201
         );
     }
@@ -138,14 +153,18 @@ class OrderController extends Controller
     // GET single order
     public function show(Order $order)
     {
+        AdminBranchScope::assertOrder($order);
+
         return response()->json(
-            $order->load(['user', 'items.addons', 'transaction', 'handledBy'])
+            $order->load(['user', 'items.addons', 'transaction', 'handledBy', 'branch'])
         );
     }
 
     // UPDATE order status
     public function updateStatus(Request $request, Order $order)
     {
+        AdminBranchScope::assertOrder($order);
+
         $request->validate([
             'status' => 'required|in:pending,confirmed,preparing,ready,completed,cancelled',
         ]);
@@ -181,6 +200,8 @@ class OrderController extends Controller
     // CANCEL order
     public function cancel(Order $order)
     {
+        AdminBranchScope::assertOrder($order);
+
         if (in_array($order->status, ['completed', 'cancelled'])) {
             return response()->json([
                 'message' => 'Cannot cancel a ' . $order->status . ' order.',

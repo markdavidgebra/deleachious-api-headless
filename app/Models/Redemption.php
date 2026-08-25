@@ -31,4 +31,9 @@ class Redemption extends Model
     {
         return $this->belongsTo(Reward::class);
     }
+
+    public function qrCode()
+    {
+        return $this->morphOne(QrCode::class, 'qrable')->latestOfMany();
+    }
 }

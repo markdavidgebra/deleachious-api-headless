@@ -18,14 +18,29 @@ class ProductController extends Controller
         private readonly ProductRewardSyncService $productRewards
     ) {}
 
-    // GET all products
-    public function index()
+    // GET products. Paginate when `page` or `per_page` is sent (admin list).
+    // The public /user/products menu still receives the full catalog.
+    public function index(Request $request)
     {
-        $products = Product::with(['category', 'variants', 'addons', 'reward'])
+        $query = Product::with(['category', 'variants', 'addons', 'reward'])
+            ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->category_id))
+            ->when($request->filled('search'), function ($q) use ($request) {
+                $term = '%'.$request->search.'%';
+                $q->where(function ($inner) use ($term) {
+                    $inner->where('name', 'like', $term)
+                        ->orWhere('description', 'like', $term);
+                });
+            })
             ->orderBy('sort_order')
-            ->get();
+            ->orderBy('name');
 
-        return response()->json($products);
+        if ($request->has('page') || $request->has('per_page')) {
+            $perPage = min(max($request->integer('per_page', 25), 1), 100);
+
+            return response()->json($query->paginate($perPage)->withQueryString());
+        }
+
+        return response()->json($query->get());
     }
 
     // CREATE product (supports multipart/form-data when an image is attached)

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\LoyaltyPoint;
+use App\Models\QrCode;
 use App\Models\Redemption;
 use App\Models\Reward;
 use App\Models\User;
@@ -57,8 +58,12 @@ class RewardRedemptionService
                 'redeemed_at' => null,
             ]);
 
+            $qr = $this->createRedemptionQr($redemption);
+            $redemption->setRelation('qrCode', $qr);
+
             return [
                 'redemption'  => $redemption->load('reward'),
+                'qr_code'     => $qr,
                 'points_left' => (int) $locked->fresh()->points,
                 'reward'      => $reward,
             ];
@@ -134,6 +139,8 @@ class RewardRedemptionService
                 'redeemed_at' => now(),
             ]);
 
+            $this->deactivateRedemptionQrs($locked);
+
             return $locked->fresh()->load(['user', 'reward']);
         });
     }
@@ -172,8 +179,60 @@ class RewardRedemptionService
                 'redeemed_at' => null,
             ]);
 
+            $this->deactivateRedemptionQrs($locked);
+
             return $locked->fresh()->load(['user', 'reward']);
         });
+    }
+
+    /**
+     * One-time QR staff scan at the counter to approve this pending request.
+     */
+    public function ensureRedemptionQr(Redemption $redemption): ?QrCode
+    {
+        if ($redemption->status !== 'pending') {
+            return $redemption->qrCode;
+        }
+
+        $existing = QrCode::query()
+            ->where('qrable_type', Redemption::class)
+            ->where('qrable_id', $redemption->id)
+            ->where('purpose', 'reward_redemption')
+            ->latest('id')
+            ->first();
+
+        if ($existing && $existing->isValid()) {
+            return $existing;
+        }
+
+        if ($existing) {
+            $existing->update(['is_active' => false]);
+        }
+
+        return $this->createRedemptionQr($redemption);
+    }
+
+    protected function createRedemptionQr(Redemption $redemption): QrCode
+    {
+        return QrCode::create([
+            'code'        => QrCode::generateCode(),
+            'type'        => 'redemption',
+            'qrable_type' => Redemption::class,
+            'qrable_id'   => $redemption->id,
+            'purpose'     => 'reward_redemption',
+            'is_active'   => true,
+            'max_scans'   => 1,
+            'expires_at'  => now()->addHours(24),
+        ]);
+    }
+
+    protected function deactivateRedemptionQrs(Redemption $redemption): void
+    {
+        QrCode::query()
+            ->where('qrable_type', Redemption::class)
+            ->where('qrable_id', $redemption->id)
+            ->where('is_active', true)
+            ->update(['is_active' => false]);
     }
 
     protected function assertRewardRedeemable(Reward $reward): void

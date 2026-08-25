@@ -9,8 +9,12 @@ use App\Models\User;
 use App\Models\Order;
 use App\Models\LoyaltyPoint;
 use App\Models\LoyaltyPointSetting;
+use App\Models\Redemption;
 use App\Models\Reward;
+use App\Services\AuditLogService;
+use App\Services\LoyaltyPointsService;
 use App\Services\RewardRedemptionService;
+use App\Support\AdminBranchScope;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -18,6 +22,7 @@ class QrController extends Controller
 {
     public function __construct(
         protected RewardRedemptionService $redemptions,
+        protected LoyaltyPointsService $loyaltyPoints,
     ) {}
 
     // ── GENERATE QR for a user (loyalty card) ────────────
@@ -56,12 +61,16 @@ class QrController extends Controller
     // ── GENERATE QR for an order (pickup verification) ───
     public function generateOrderQr(Request $request, Order $order)
     {
+        AdminBranchScope::assertOrder($order);
+
         $request->validate([
             'expires_in_minutes' => 'nullable|integer|min:5|max:1440',
         ]);
 
         $existing = QrCode::where('qrable_type', Order::class)
             ->where('qrable_id', $order->id)
+            ->where('purpose', 'order_pickup')
+            ->latest('id')
             ->first();
 
         if ($existing && $existing->isValid()) {
@@ -72,18 +81,7 @@ class QrController extends Controller
             ]);
         }
 
-        $expiresInMinutes = $request->expires_in_minutes ?? 30;
-
-        $qr = QrCode::create([
-            'code'        => QrCode::generateCode(),
-            'type'        => 'order',
-            'qrable_type' => Order::class,
-            'qrable_id'   => $order->id,
-            'purpose'     => 'order_pickup',
-            'is_active'   => true,
-            'max_scans'   => 1,
-            'expires_at'  => now()->addMinutes($expiresInMinutes),
-        ]);
+        $qr = $order->ensurePickupQr($request->integer('expires_in_minutes', 120));
 
         return response()->json([
             'message'    => 'Order QR code generated successfully',
@@ -98,14 +96,21 @@ class QrController extends Controller
     {
         $request->validate([
             'code'      => 'required|string',
-            'action'    => 'required|in:earn_points,redeem_reward,verify_order',
+            'action'    => 'required|in:earn_points,redeem_reward,verify_order,approve_redemption',
             'branch_id' => 'nullable|exists:branches,id',
             'reward_id' => 'nullable|exists:rewards,id',
             'amount'    => 'nullable|numeric|min:0',
             'points'    => 'nullable|integer|min:1',
         ]);
 
-        $qr = QrCode::where('code', $request->code)->first();
+        $request->merge([
+            'branch_id' => AdminBranchScope::resolveWriteBranchId(
+                $request->filled('branch_id') ? $request->integer('branch_id') : null
+            ),
+        ]);
+
+        $code = strtoupper(trim((string) $request->code));
+        $qr = QrCode::where('code', $code)->first();
 
         // QR not found
         if (! $qr) {
@@ -149,18 +154,140 @@ class QrController extends Controller
             ], 422);
         }
 
-        // Handle each action
-        $response = match ($request->action) {
-            'earn_points'   => $this->handleEarnPoints($qr, $request),
-            'redeem_reward' => $this->handleRedeemReward($qr, $request),
-            'verify_order'  => $this->handleVerifyOrder($qr, $request),
-            default         => ['result' => 'failed', 'message' => 'Unknown action'],
+        // Identify the QR first so the selected scan mode cannot send an
+        // order code through reward-approve (the default counter tab).
+        $isRedemptionQr = $qr->type === 'redemption' || $qr->purpose === 'reward_redemption';
+        $isOrderQr = $qr->type === 'order' || $qr->purpose === 'order_pickup';
+
+        $response = match (true) {
+            $isRedemptionQr => $this->handleApproveRedemption($qr, $request),
+            $isOrderQr => $this->handleVerifyOrder($qr, $request),
+            $request->action === 'approve_redemption' => $this->handleApproveRedemption($qr, $request),
+            $request->action === 'verify_order' => $this->handleVerifyOrder($qr, $request),
+            default => match ($request->action) {
+                'earn_points'   => $this->handleEarnPoints($qr, $request),
+                'redeem_reward' => $this->handleRedeemReward($qr, $request),
+                default         => ['result' => 'failed', 'message' => 'Unknown action'],
+            },
         };
 
-        // Increment scan count
-        $qr->increment('scan_count');
+        $response['action'] = match (true) {
+            $isRedemptionQr => 'approve_redemption',
+            $isOrderQr => 'verify_order',
+            default => $request->action,
+        };
+
+        // Only count successful scans so a one-time reward QR is not burned on a failed attempt.
+        if (($response['result'] ?? null) === 'success') {
+            $qr->increment('scan_count');
+        }
 
         return response()->json($response);
+    }
+
+    // ── Handle: Approve in-app redemption QR ──────────────
+    private function handleApproveRedemption(QrCode $qr, Request $request): array
+    {
+        $redemption = null;
+
+        if ($qr->type === 'redemption' || $qr->purpose === 'reward_redemption') {
+            $redemption = Redemption::query()->with(['user', 'reward'])->find($qr->qrable_id);
+        } elseif ($qr->type === 'user') {
+            $redemption = Redemption::query()
+                ->with(['user', 'reward'])
+                ->where('user_id', $qr->qrable_id)
+                ->where('status', 'pending')
+                ->latest('id')
+                ->first();
+
+            if (! $redemption) {
+                QrScan::create([
+                    'qr_code_id' => $qr->id,
+                    'scanned_by' => auth()->id(),
+                    'branch_id'  => $request->branch_id,
+                    'action'     => 'approve_redemption',
+                    'result'     => 'failed',
+                    'notes'      => 'No pending redemption for this member',
+                ]);
+
+                return [
+                    'result'  => 'failed',
+                    'message' => 'This member has no pending reward to approve.',
+                    'user'    => User::find($qr->qrable_id)?->only(['id', 'name', 'email']),
+                ];
+            }
+        } else {
+            QrScan::create([
+                'qr_code_id' => $qr->id,
+                'scanned_by' => auth()->id(),
+                'branch_id'  => $request->branch_id,
+                'action'     => 'approve_redemption',
+                'result'     => 'failed',
+                'notes'      => 'QR is not a redemption or member loyalty code',
+            ]);
+
+            return [
+                'result'  => 'failed',
+                'message' => 'This QR cannot approve a reward. Ask the member to open Rewards and show their redeem QR.',
+            ];
+        }
+
+        if (! $redemption) {
+            return [
+                'result'  => 'failed',
+                'message' => 'Redemption not found for this QR.',
+            ];
+        }
+
+        if ($redemption->status !== 'pending') {
+            QrScan::create([
+                'qr_code_id' => $qr->id,
+                'scanned_by' => auth()->id(),
+                'branch_id'  => $request->branch_id,
+                'action'     => 'approve_redemption',
+                'result'     => 'failed',
+                'notes'      => 'Redemption #'.$redemption->id.' is already '.$redemption->status,
+            ]);
+
+            return [
+                'result'     => 'failed',
+                'message'    => 'This reward was already '.$redemption->status.'.',
+                'redemption' => $redemption,
+                'reward'     => $redemption->reward,
+                'user'       => $redemption->user?->only(['id', 'name', 'email']),
+            ];
+        }
+
+        try {
+            $approved = $this->redemptions->approve($redemption);
+        } catch (ValidationException $e) {
+            $first = collect($e->errors())->flatten()->first() ?? 'Unable to approve redemption.';
+
+            return [
+                'result'  => 'failed',
+                'message' => $first,
+            ];
+        }
+
+        QrScan::create([
+            'qr_code_id'      => $qr->id,
+            'scanned_by'      => auth()->id(),
+            'branch_id'       => $request->branch_id,
+            'action'          => 'approve_redemption',
+            'result'          => 'success',
+            'points_affected' => 0,
+            'notes'           => 'Approved '.$approved->reward?->name.' for '.$approved->user?->name,
+        ]);
+
+        return [
+            'result'      => 'success',
+            'message'     => ($approved->reward?->name ?? 'Reward').' approved. Please fulfill it at the counter.',
+            'reward'      => $approved->reward,
+            'redemption'  => $approved,
+            'points_used' => (int) $approved->points_used,
+            'points_left' => (int) ($approved->user?->points ?? 0),
+            'user'        => $approved->user?->only(['id', 'name', 'email']),
+        ];
     }
 
     // ── Handle: Earn Points ───────────────────────────────
@@ -324,6 +451,14 @@ class QrController extends Controller
             ];
         }
 
+        $lockedBranch = AdminBranchScope::branchId();
+        if ($lockedBranch && (int) $order->branch_id !== $lockedBranch) {
+            return [
+                'result'  => 'failed',
+                'message' => 'This order belongs to another branch.',
+            ];
+        }
+
         if ($order->status === 'cancelled') {
             return [
                 'result'  => 'failed',
@@ -335,14 +470,42 @@ class QrController extends Controller
             return [
                 'result'  => 'failed',
                 'message' => 'This order is already completed.',
+                'order'   => $order,
             ];
         }
 
-        // Mark order as ready
-        $order->update(['status' => 'ready']);
+        if ($order->status !== 'ready') {
+            return [
+                'result'  => 'failed',
+                'message' => 'This order is not ready to serve yet ('.$order->status.').',
+                'order'   => $order,
+            ];
+        }
 
-        // Deactivate QR after use
+        $order->update([
+            'status'       => 'completed',
+            'completed_at' => now(),
+        ]);
+
+        $pointsAward = ['awarded' => false, 'points' => 0, 'total_points' => null];
+        if ($order->user_id && $order->points_earned > 0) {
+            $pointsAward = $this->loyaltyPoints->awardForOrder($order->fresh());
+        }
+
         $qr->update(['is_active' => false]);
+
+        AuditLogService::log(
+            'updated',
+            'order',
+            'Order '.$order->order_number.' served via QR scan',
+            $order
+        );
+
+        $servedLabel = match ($order->type) {
+            'delivery' => 'delivered',
+            'dine_in'  => 'served',
+            default    => 'picked up',
+        };
 
         QrScan::create([
             'qr_code_id' => $qr->id,
@@ -350,13 +513,15 @@ class QrController extends Controller
             'branch_id'  => $request->branch_id,
             'action'     => 'verify_order',
             'result'     => 'success',
-            'notes'      => 'Order ' . $order->order_number . ' verified for pickup',
+            'notes'      => 'Order '.$order->order_number.' '.$servedLabel,
         ]);
 
         return [
             'result'  => 'success',
-            'message' => 'Order verified successfully! Ready for pickup.',
-            'order'   => $order->load(['items.addons', 'user']),
+            'message' => 'Order '.$order->order_number.' '.$servedLabel.'.',
+            'order'   => $order->fresh()->load(['items.addons', 'user']),
+            'points_awarded' => (int) $pointsAward['points'],
+            'points_newly_credited' => (bool) $pointsAward['awarded'],
         ];
     }
 
@@ -374,9 +539,11 @@ class QrController extends Controller
     // ── GET scan history ──────────────────────────────────
     public function scanHistory(Request $request)
     {
-        $scans = QrScan::with(['qrCode', 'scannedBy', 'branch'])
-            ->when($request->branch_id, fn($q) => $q->where('branch_id', $request->branch_id))
-            ->when($request->action,    fn($q) => $q->where('action',    $request->action))
+        $scans = QrScan::with(['qrCode', 'scannedBy', 'branch']);
+        AdminBranchScope::applyColumn($scans, 'branch_id', $request);
+
+        $scans = $scans
+            ->when($request->action, fn ($q) => $q->where('action', $request->action))
             ->orderByDesc('created_at')
             ->get();
 

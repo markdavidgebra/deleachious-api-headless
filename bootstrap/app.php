@@ -17,6 +17,9 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'paymongo.signature' => \App\Http\Middleware\VerifyPaymongoSignature::class,
+            'admin.super'        => \App\Http\Middleware\EnsureSuperAdmin::class,
+            'admin.developer'    => \App\Http\Middleware\EnsureDeveloper::class,
+            'admin.can'          => \App\Http\Middleware\EnsureAdminCan::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Redemption;
 use App\Services\RewardRedemptionService;
+use App\Support\AdminPaginator;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -15,13 +16,27 @@ class RedemptionController extends Controller
     ) {}
 
     // GET all redemptions
-    public function index()
+    public function index(Request $request)
     {
-        $redemptions = Redemption::with(['user', 'reward'])
-            ->orderByDesc('created_at')
-            ->get();
+        $query = Redemption::with(['user', 'reward'])
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
+            ->orderByDesc('created_at');
 
-        return response()->json($redemptions);
+        $stats = [
+            'total'    => Redemption::count(),
+            'pending'  => Redemption::where('status', 'pending')->count(),
+            'approved' => Redemption::where('status', 'approved')->count(),
+            'rejected' => Redemption::where('status', 'rejected')->count(),
+        ];
+
+        if (AdminPaginator::requested($request)) {
+            $payload = $query->paginate(AdminPaginator::perPage($request))->withQueryString()->toArray();
+            $payload['stats'] = $stats;
+
+            return response()->json($payload);
+        }
+
+        return response()->json($query->get());
     }
 
     // APPROVE or REJECT a redemption
