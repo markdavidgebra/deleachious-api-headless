@@ -19,6 +19,8 @@ class User extends Authenticatable
         'avatar_path',
         'points',
         'fcm_token',
+        'provider',
+        'provider_id',
     ];
 
     protected $hidden = [

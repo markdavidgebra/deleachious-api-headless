@@ -4,9 +4,13 @@ namespace App\Http\Controllers\Api\User;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\SocialAuthService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -113,9 +117,97 @@ class AuthController extends Controller
             'password' => $request->password,
         ]);
 
-        return response()->json([
-            'message' => 'Password updated successfully',
+        return response()->json(['message' => 'Password updated successfully']);
+    }
+
+    public function socialLogin(Request $request, SocialAuthService $social)
+    {
+        $validated = $request->validate([
+            'provider' => 'required|in:google,facebook,apple',
+            'id_token' => 'nullable|string',
+            'access_token' => 'nullable|string',
+            'name' => 'nullable|string|max:120',
+            'email' => 'nullable|email|max:190',
         ]);
+
+        $user = $social->authenticate(
+            $validated['provider'],
+            $validated['id_token'] ?? null,
+            $validated['access_token'] ?? null,
+            $validated['name'] ?? null,
+            $validated['email'] ?? null,
+        );
+
+        $token = $user->createToken('user_token')->plainTextToken;
+
+        return response()->json([
+            'user' => $user->fresh(),
+            'token' => $token,
+        ]);
+    }
+
+    public function forgotPassword(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        $email = Str::lower($request->string('email')->toString());
+        $user = User::query()->where('email', $email)->first();
+
+        if ($user && ! str_ends_with((string) $user->email, '@deleted.invalid')) {
+            $code = (string) random_int(100000, 999999);
+            DB::table('password_reset_tokens')->updateOrInsert(
+                ['email' => $user->email],
+                [
+                    'token' => Hash::make($code),
+                    'created_at' => now(),
+                ],
+            );
+
+            Mail::raw(
+                "Your Daleachious password reset code is {$code}. It expires in 15 minutes.",
+                function ($message) use ($user) {
+                    $message->to($user->email)->subject('Your Daleachious reset code');
+                },
+            );
+        }
+
+        return response()->json([
+            'message' => 'If that email is registered, a reset code is on its way.',
+        ]);
+    }
+
+    public function resetPassword(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'code' => 'required|string',
+            'password' => 'required|string|min:6|confirmed',
+        ]);
+
+        $email = Str::lower($request->string('email')->toString());
+        $row = DB::table('password_reset_tokens')->where('email', $email)->first();
+
+        if (
+            ! $row
+            || ! Hash::check($request->code, $row->token)
+            || \Illuminate\Support\Carbon::parse($row->created_at)->addMinutes(15)->isPast()
+        ) {
+            return response()->json([
+                'message' => 'That reset code is invalid or has expired.',
+            ], 422);
+        }
+
+        $user = User::query()->where('email', $email)->first();
+        if (! $user || str_ends_with((string) $user->email, '@deleted.invalid')) {
+            return response()->json(['message' => 'Account not found.'], 404);
+        }
+
+        $user->update(['password' => $request->password]);
+        DB::table('password_reset_tokens')->where('email', $email)->delete();
+
+        return response()->json(['message' => 'Password updated. You can sign in now.']);
     }
 
     // POST /user/avatar  (multipart form-data, field: "avatar")

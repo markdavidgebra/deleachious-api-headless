@@ -18,13 +18,17 @@ class Product extends Model
         'base_price',
         'is_available',
         'is_featured',
+        'is_redeemable',
+        'points_required',
         'sort_order',
     ];
 
     protected $casts = [
-        'base_price'   => 'float',
-        'is_available' => 'boolean',
-        'is_featured'  => 'boolean',
+        'base_price'     => 'float',
+        'is_available'   => 'boolean',
+        'is_featured'    => 'boolean',
+        'is_redeemable'  => 'boolean',
+        'points_required'=> 'integer',
     ];
 
     // Expose a ready-to-use absolute URL on every JSON response
@@ -58,5 +62,10 @@ class Product extends Model
     public function addons()
     {
         return $this->hasMany(ProductAddon::class);
+    }
+
+    public function reward()
+    {
+        return $this->hasOne(Reward::class);
     }
 }

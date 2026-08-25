@@ -121,6 +121,9 @@ Route::prefix('user')->group(function () {
     // Public
     Route::post('/register', [UserAuthController::class, 'register']);
     Route::post('/login',    [UserAuthController::class, 'login']);
+    Route::post('/social-login', [UserAuthController::class, 'socialLogin']);
+    Route::post('/forgot-password', [UserAuthController::class, 'forgotPassword']);
+    Route::post('/reset-password', [UserAuthController::class, 'resetPassword']);
     Route::get('/products',   [ProductController::class,  'index']);
     Route::get('/categories', [CategoryController::class, 'index']);
 

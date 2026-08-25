@@ -44,4 +44,19 @@ return [
         'cancel_url'      => env('PAYMONGO_CANCEL_URL',  env('APP_URL').'/checkout/cancel'),
     ],
 
+    'google' => [
+        // Comma-separated OAuth client IDs (web, iOS, Android).
+        'client_ids' => env('GOOGLE_CLIENT_IDS', ''),
+    ],
+
+    'facebook' => [
+        'client_id' => env('FACEBOOK_CLIENT_ID', ''),
+        'client_secret' => env('FACEBOOK_CLIENT_SECRET', ''),
+    ],
+
+    'apple' => [
+        // Comma-separated bundle IDs / services IDs, e.g. com.markdavidbillena.deleachiousapp
+        'client_ids' => env('APPLE_CLIENT_IDS', 'com.markdavidbillena.deleachiousapp'),
+    ],
+
 ];

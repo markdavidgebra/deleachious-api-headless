@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\ProductAddon;
+use App\Services\ProductRewardSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -13,10 +14,14 @@ use App\Services\AuditLogService;
 
 class ProductController extends Controller
 {
+    public function __construct(
+        private readonly ProductRewardSyncService $productRewards
+    ) {}
+
     // GET all products
     public function index()
     {
-        $products = Product::with(['category', 'variants', 'addons'])
+        $products = Product::with(['category', 'variants', 'addons', 'reward'])
             ->orderBy('sort_order')
             ->get();
 
@@ -33,6 +38,8 @@ class ProductController extends Controller
             'base_price'       => 'required|numeric|min:0',
             'is_available'     => 'boolean',
             'is_featured'      => 'boolean',
+            'is_redeemable'    => 'boolean',
+            'points_required'  => 'nullable|integer|min:1|required_if:is_redeemable,true,1',
             'image'            => 'nullable|image|mimes:jpeg,jpg,png,webp|max:2048',
             'variants'         => 'nullable|array',
             'variants.*.name'  => 'required_with:variants|string|max:255',
@@ -47,15 +54,19 @@ class ProductController extends Controller
             $imagePath = $request->file('image')->store('products', 'public');
         }
 
+        $isRedeemable = $request->boolean('is_redeemable', false);
+
         $product = Product::create([
-            'category_id'  => $request->category_id,
-            'name'         => $request->name,
-            'slug'         => Str::slug($request->name),
-            'description'  => $request->description,
-            'image'        => $imagePath,
-            'base_price'   => $request->base_price,
-            'is_available' => $request->boolean('is_available', true),
-            'is_featured'  => $request->boolean('is_featured', false),
+            'category_id'     => $request->category_id,
+            'name'            => $request->name,
+            'slug'            => Str::slug($request->name),
+            'description'     => $request->description,
+            'image'           => $imagePath,
+            'base_price'      => $request->base_price,
+            'is_available'    => $request->boolean('is_available', true),
+            'is_featured'     => $request->boolean('is_featured', false),
+            'is_redeemable'   => $isRedeemable,
+            'points_required' => $isRedeemable ? (int) $request->points_required : null,
         ]);
 
         // Save variants if provided
@@ -79,14 +90,17 @@ class ProductController extends Controller
                 ]);
             }
         }
+
+        $this->productRewards->sync($product);
+
         AuditLogService::created('product', $product, 'Product created: ' . $product->name);
-        return response()->json($product->load(['category', 'variants', 'addons']), 201);
+        return response()->json($product->load(['category', 'variants', 'addons', 'reward']), 201);
     }
 
     // GET single product
     public function show(Product $product)
     {
-        return response()->json($product->load(['category', 'variants', 'addons']));
+        return response()->json($product->load(['category', 'variants', 'addons', 'reward']));
     }
 
     // UPDATE product (supports multipart via POST with _method=PUT)
@@ -99,6 +113,8 @@ class ProductController extends Controller
             'base_price'       => 'sometimes|numeric|min:0',
             'is_available'     => 'boolean',
             'is_featured'      => 'boolean',
+            'is_redeemable'    => 'boolean',
+            'points_required'  => 'nullable|integer|min:1|required_if:is_redeemable,true,1',
             'image'            => 'nullable|image|mimes:jpeg,jpg,png,webp|max:2048',
             'remove_image'     => 'sometimes|boolean',
             'variants'         => 'nullable|array',
@@ -119,6 +135,16 @@ class ProductController extends Controller
             'is_available',
             'is_featured',
         ]);
+
+        if ($request->has('is_redeemable')) {
+            $isRedeemable = $request->boolean('is_redeemable');
+            $updateData['is_redeemable'] = $isRedeemable;
+            $updateData['points_required'] = $isRedeemable
+                ? (int) $request->input('points_required')
+                : null;
+        } elseif ($request->has('points_required') && $product->is_redeemable) {
+            $updateData['points_required'] = (int) $request->input('points_required');
+        }
 
         // Handle image: replace or remove
         if ($request->hasFile('image')) {
@@ -169,9 +195,11 @@ class ProductController extends Controller
             }
         }
 
+        $this->productRewards->sync($product->fresh());
+
         AuditLogService::updated('product', $product, $oldValues, 'Product updated: ' . $product->name);
 
-        return response()->json($product->load(['category', 'variants', 'addons']));
+        return response()->json($product->load(['category', 'variants', 'addons', 'reward']));
     }
 
     // DELETE product
@@ -182,6 +210,11 @@ class ProductController extends Controller
         // Clean up image file if any
         if ($product->image && Storage::disk('public')->exists($product->image)) {
             Storage::disk('public')->delete($product->image);
+        }
+
+        // Linked reward loses product_id via nullOnDelete; deactivate explicitly.
+        if ($reward = $product->reward) {
+            $reward->update(['is_active' => false]);
         }
 
         $product->delete();
