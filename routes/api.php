@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\Admin\OrderController;
 use App\Http\Controllers\Api\Admin\TransactionController;
 use App\Http\Controllers\Api\User\AuthController as UserAuthController;
 use App\Http\Controllers\Api\Admin\BranchController;
+use App\Http\Controllers\Api\Admin\DeveloperPurgeController;
 use App\Http\Controllers\Api\Admin\DeveloperStudioController;
 use App\Http\Controllers\Api\Admin\StaffController;
 use App\Http\Controllers\Api\Admin\RoleController;
@@ -49,6 +50,15 @@ Route::prefix('admin')->group(function () {
             Route::get('studio/activity', [DeveloperStudioController::class, 'activity']);
             Route::get('studio/payments', [DeveloperStudioController::class, 'payments']);
             Route::post('studio/payments/{transaction}/recheck', [DeveloperStudioController::class, 'recheck']);
+            Route::delete('orders/all', [DeveloperPurgeController::class, 'orders']);
+            Route::delete('transactions/all', [DeveloperPurgeController::class, 'transactions']);
+            Route::delete('members/all', [DeveloperPurgeController::class, 'members']);
+            Route::delete('redemptions/all', [DeveloperPurgeController::class, 'redemptions']);
+            Route::delete('rewards/all', [DeveloperPurgeController::class, 'rewards']);
+            Route::delete('orders/{order}', [DeveloperPurgeController::class, 'destroyOrder']);
+            Route::delete('transactions/{transaction}', [DeveloperPurgeController::class, 'destroyTransaction']);
+            Route::delete('members/{user}', [DeveloperPurgeController::class, 'destroyMember']);
+            Route::delete('redemptions/{redemption}', [DeveloperPurgeController::class, 'destroyRedemption']);
         });
 
         Route::middleware('admin.super')->group(function () {
