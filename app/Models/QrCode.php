@@ -29,7 +29,7 @@ class QrCode extends Model
         'expires_at' => 'datetime',
     ];
 
-    // Polymorphic — links to User or Order
+    // Polymorphic — links to User or Redemption
     public function qrable()
     {
         return $this->morphTo();
@@ -73,5 +73,31 @@ class QrCode extends Model
     public function isExpired(): bool
     {
         return $this->expires_at && now()->isAfter($this->expires_at);
+    }
+
+    public static function getOrCreateForUser(User $user): self
+    {
+        $qr = self::query()
+            ->where('qrable_type', User::class)
+            ->where('qrable_id', $user->id)
+            ->where('type', 'user')
+            ->where('is_active', true)
+            ->latest('id')
+            ->first();
+
+        if ($qr && $qr->isValid()) {
+            return $qr;
+        }
+
+        return self::create([
+            'code'        => self::generateCode(),
+            'type'        => 'user',
+            'qrable_type' => User::class,
+            'qrable_id'   => $user->id,
+            'purpose'     => 'user_loyalty',
+            'is_active'   => true,
+            'max_scans'   => null,
+            'expires_at'  => null,
+        ]);
     }
 }

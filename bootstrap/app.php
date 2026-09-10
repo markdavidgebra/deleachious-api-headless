@@ -16,30 +16,18 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'paymongo.signature' => \App\Http\Middleware\VerifyPaymongoSignature::class,
             'admin.super'        => \App\Http\Middleware\EnsureSuperAdmin::class,
             'admin.developer'    => \App\Http\Middleware\EnsureDeveloper::class,
             'admin.can'          => \App\Http\Middleware\EnsureAdminCan::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        $exceptions->render(function (\App\Exceptions\PaymentException $e) {
-            return $e->toResponse();
-        });
+        //
     })
     ->booted(function (): void {
-        RateLimiter::for('order-checkout', function (Request $request) {
+        RateLimiter::for('redemptions', function (Request $request) {
             return Limit::perMinute(12)
                 ->by(optional($request->user())->id ?: $request->ip());
-        });
-
-        RateLimiter::for('order-confirm', function (Request $request) {
-            return Limit::perMinute(30)
-                ->by(optional($request->user())->id ?: $request->ip());
-        });
-
-        RateLimiter::for('paymongo-webhook', function (Request $request) {
-            return Limit::perMinute(120)->by($request->ip());
         });
     })
     ->create();

@@ -7,12 +7,17 @@ use App\Models\Admin;
 use App\Models\User;
 use App\Models\LoyaltyPoint;
 use App\Services\AuditLogService;
+use App\Services\DaleachiousCardService;
 use App\Support\AdminPaginator;
 use App\Support\AdminPermissions;
 use Illuminate\Http\Request;
 
 class MemberController extends Controller
 {
+    public function __construct(private readonly DaleachiousCardService $cards)
+    {
+    }
+
     // GET all members
     public function index(Request $request)
     {
@@ -22,6 +27,7 @@ class MemberController extends Controller
         $hidePoints = AdminPermissions::restricts($admin, 'members.hide_points');
 
         $query = User::query()
+            ->with('daleachiousCard')
             ->when($request->filled('search'), function ($q) use ($request, $hideEmail, $hidePhone) {
                 $term = '%'.$request->search.'%';
                 $q->where(function ($inner) use ($term, $hideEmail, $hidePhone) {
@@ -62,13 +68,19 @@ class MemberController extends Controller
     public function show(Request $request, User $user)
     {
         $admin = $this->actor($request);
-        $relations = ['redemptions.reward'];
+        $relations = ['redemptions.pointItem', 'redemptions.reward'];
 
         if (! AdminPermissions::restricts($admin, 'members.hide_points')) {
             $relations[] = 'loyaltyPoints';
         }
 
         $user->load($relations);
+
+        if (! $user->relationLoaded('daleachiousCard') || ! $user->daleachiousCard) {
+            $this->cards->getOrCreateCard($user);
+            $user->unsetRelation('daleachiousCard');
+            $user->load('daleachiousCard');
+        }
 
         return response()->json($this->present($user, $admin));
     }
@@ -141,6 +153,12 @@ class MemberController extends Controller
         if (AdminPermissions::restricts($admin, 'members.hide_points')) {
             unset($row['points'], $row['loyalty_points']);
         }
+
+        $card = $user->daleachiousCard;
+        $row['card_balance'] = $card ? (float) $card->balance : 0;
+        $row['formatted_card_balance'] = $this->cards->formatPeso($card->balance ?? 0);
+        $row['card_status'] = $card?->status ?? null;
+        unset($row['daleachious_card']);
 
         return $row;
     }

@@ -6,108 +6,51 @@ use App\Http\Controllers\Controller;
 use App\Models\QrCode;
 use App\Models\QrScan;
 use App\Models\User;
-use App\Models\Order;
 use App\Models\LoyaltyPoint;
 use App\Models\LoyaltyPointSetting;
 use App\Models\Redemption;
-use App\Models\Reward;
+use App\Models\PointItem;
+use App\Models\Admin;
+use App\Models\Branch;
+use App\Models\DaleachiousCardTransaction;
 use App\Services\AuditLogService;
-use App\Services\LoyaltyPointsService;
+use App\Services\DaleachiousCardService;
 use App\Services\RewardRedemptionService;
 use App\Support\AdminBranchScope;
+use App\Support\AdminPermissions;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class QrController extends Controller
 {
     public function __construct(
         protected RewardRedemptionService $redemptions,
-        protected LoyaltyPointsService $loyaltyPoints,
+        protected DaleachiousCardService $cards,
     ) {}
-
-    // ── GENERATE QR for a user (loyalty card) ────────────
-    public function generateUserQr(User $user)
-    {
-        $existing = QrCode::where('qrable_type', User::class)
-            ->where('qrable_id', $user->id)
-            ->first();
-
-        if ($existing && $existing->isValid()) {
-            return response()->json([
-                'message' => 'User already has an active QR code',
-                'qr_code' => $existing,
-                'user'    => $user->only(['id', 'name', 'email', 'points']),
-            ]);
-        }
-
-        $qr = QrCode::create([
-            'code'        => QrCode::generateCode(),
-            'type'        => 'user',
-            'qrable_type' => User::class,
-            'qrable_id'   => $user->id,
-            'purpose'     => 'user_loyalty',
-            'is_active'   => true,
-            'max_scans'   => null,
-            'expires_at'  => null,
-        ]);
-
-        return response()->json([
-            'message' => 'User QR code generated successfully',
-            'qr_code' => $qr,
-            'user'    => $user->only(['id', 'name', 'email', 'points']),
-        ], 201);
-    }
-
-    // ── GENERATE QR for an order (pickup verification) ───
-    public function generateOrderQr(Request $request, Order $order)
-    {
-        AdminBranchScope::assertOrder($order);
-
-        $request->validate([
-            'expires_in_minutes' => 'nullable|integer|min:5|max:1440',
-        ]);
-
-        $existing = QrCode::where('qrable_type', Order::class)
-            ->where('qrable_id', $order->id)
-            ->where('purpose', 'order_pickup')
-            ->latest('id')
-            ->first();
-
-        if ($existing && $existing->isValid()) {
-            return response()->json([
-                'message' => 'Order already has an active QR code',
-                'qr_code' => $existing,
-                'order'   => $order->only(['id', 'order_number', 'status', 'total']),
-            ]);
-        }
-
-        $qr = $order->ensurePickupQr($request->integer('expires_in_minutes', 120));
-
-        return response()->json([
-            'message'    => 'Order QR code generated successfully',
-            'qr_code'    => $qr,
-            'expires_at' => $qr->expires_at,
-            'order'      => $order->only(['id', 'order_number', 'status', 'total']),
-        ], 201);
-    }
 
     // ── SCAN a QR code ────────────────────────────────────
     public function scan(Request $request)
     {
         $request->validate([
             'code'      => 'required|string',
-            'action'    => 'required|in:earn_points,redeem_reward,verify_order,approve_redemption',
-            'branch_id' => 'nullable|exists:branches,id',
-            'reward_id' => 'nullable|exists:rewards,id',
+            'action'    => 'required|in:earn_points,redeem_reward,fulfill_redemption,topup_card',
+            'reward_id' => 'nullable|exists:point_items,id',
+            'point_item_id' => 'nullable|exists:point_items,id',
             'amount'    => 'nullable|numeric|min:0',
             'points'    => 'nullable|integer|min:1',
+            'payment_method' => 'nullable|string|in:daleachious_card,cash,credit_debit,gcash,maya',
         ]);
 
         $request->merge([
-            'branch_id' => AdminBranchScope::resolveWriteBranchId(
-                $request->filled('branch_id') ? $request->integer('branch_id') : null
-            ),
+            'branch_id' => AdminBranchScope::resolveWriteBranchId(null),
         ]);
+
+        if (! $request->branch_id) {
+            throw ValidationException::withMessages([
+                'branch_id' => 'This staff account has no assigned branch. Assign a branch before scanning.',
+            ]);
+        }
 
         $code = strtoupper(trim((string) $request->code));
         $qr = QrCode::where('code', $code)->first();
@@ -154,16 +97,12 @@ class QrController extends Controller
             ], 422);
         }
 
-        // Identify the QR first so the selected scan mode cannot send an
-        // order code through reward-approve (the default counter tab).
-        $isRedemptionQr = $qr->type === 'redemption' || $qr->purpose === 'reward_redemption';
-        $isOrderQr = $qr->type === 'order' || $qr->purpose === 'order_pickup';
+        $isRedemptionQr = $qr->type === 'redemption' || in_array($qr->purpose, ['point_redemption', 'reward_redemption'], true);
 
         $response = match (true) {
-            $isRedemptionQr => $this->handleApproveRedemption($qr, $request),
-            $isOrderQr => $this->handleVerifyOrder($qr, $request),
-            $request->action === 'approve_redemption' => $this->handleApproveRedemption($qr, $request),
-            $request->action === 'verify_order' => $this->handleVerifyOrder($qr, $request),
+            $request->action === 'topup_card' => $this->handleTopUpCard($qr, $request),
+            $isRedemptionQr => $this->handleFulfillRedemption($qr, $request),
+            $request->action === 'fulfill_redemption' => $this->handleFulfillRedemption($qr, $request),
             default => match ($request->action) {
                 'earn_points'   => $this->handleEarnPoints($qr, $request),
                 'redeem_reward' => $this->handleRedeemReward($qr, $request),
@@ -171,30 +110,35 @@ class QrController extends Controller
             },
         };
 
-        $response['action'] = match (true) {
-            $isRedemptionQr => 'approve_redemption',
-            $isOrderQr => 'verify_order',
-            default => $request->action,
-        };
+        $response['action'] = $request->action === 'topup_card'
+            ? 'topup_card'
+            : ($isRedemptionQr ? 'fulfill_redemption' : $request->action);
 
         // Only count successful scans so a one-time reward QR is not burned on a failed attempt.
         if (($response['result'] ?? null) === 'success') {
             $qr->increment('scan_count');
+            $response['branch'] = Branch::query()
+                ->find($request->branch_id)
+                ?->only(['id', 'name', 'code']);
+            $scanner = $request->user();
+            $response['scanned_by'] = $scanner instanceof Admin
+                ? $scanner->only(['id', 'name', 'role'])
+                : null;
         }
 
         return response()->json($response);
     }
 
-    // ── Handle: Approve in-app redemption QR ──────────────
-    private function handleApproveRedemption(QrCode $qr, Request $request): array
+    // ── Handle: Fulfill an in-app redemption QR ───────────
+    private function handleFulfillRedemption(QrCode $qr, Request $request): array
     {
         $redemption = null;
 
-        if ($qr->type === 'redemption' || $qr->purpose === 'reward_redemption') {
-            $redemption = Redemption::query()->with(['user', 'reward'])->find($qr->qrable_id);
+        if ($qr->type === 'redemption' || in_array($qr->purpose, ['point_redemption', 'reward_redemption'], true)) {
+            $redemption = Redemption::query()->with(['user', 'pointItem'])->find($qr->qrable_id);
         } elseif ($qr->type === 'user') {
             $redemption = Redemption::query()
-                ->with(['user', 'reward'])
+                ->with(['user', 'pointItem'])
                 ->where('user_id', $qr->qrable_id)
                 ->where('status', 'pending')
                 ->latest('id')
@@ -205,14 +149,14 @@ class QrController extends Controller
                     'qr_code_id' => $qr->id,
                     'scanned_by' => auth()->id(),
                     'branch_id'  => $request->branch_id,
-                    'action'     => 'approve_redemption',
+                    'action'     => 'fulfill_redemption',
                     'result'     => 'failed',
                     'notes'      => 'No pending redemption for this member',
                 ]);
 
                 return [
                     'result'  => 'failed',
-                    'message' => 'This member has no pending reward to approve.',
+                    'message' => 'This member has no pending reward to fulfill.',
                     'user'    => User::find($qr->qrable_id)?->only(['id', 'name', 'email']),
                 ];
             }
@@ -221,14 +165,14 @@ class QrController extends Controller
                 'qr_code_id' => $qr->id,
                 'scanned_by' => auth()->id(),
                 'branch_id'  => $request->branch_id,
-                'action'     => 'approve_redemption',
+                'action'     => 'fulfill_redemption',
                 'result'     => 'failed',
                 'notes'      => 'QR is not a redemption or member loyalty code',
             ]);
 
             return [
                 'result'  => 'failed',
-                'message' => 'This QR cannot approve a reward. Ask the member to open Rewards and show their redeem QR.',
+                'message' => 'This QR cannot fulfill a reward. Ask the member to open Points and show their reward QR.',
             ];
         }
 
@@ -244,14 +188,14 @@ class QrController extends Controller
                 'qr_code_id' => $qr->id,
                 'scanned_by' => auth()->id(),
                 'branch_id'  => $request->branch_id,
-                'action'     => 'approve_redemption',
+                'action'     => 'fulfill_redemption',
                 'result'     => 'failed',
                 'notes'      => 'Redemption #'.$redemption->id.' is already '.$redemption->status,
             ]);
 
             return [
                 'result'     => 'failed',
-                'message'    => 'This reward was already '.$redemption->status.'.',
+                'message'    => 'This item was already '.$redemption->status.'.',
                 'redemption' => $redemption,
                 'reward'     => $redemption->reward,
                 'user'       => $redemption->user?->only(['id', 'name', 'email']),
@@ -259,9 +203,9 @@ class QrController extends Controller
         }
 
         try {
-            $approved = $this->redemptions->approve($redemption);
+            $fulfilled = $this->redemptions->fulfill($redemption);
         } catch (ValidationException $e) {
-            $first = collect($e->errors())->flatten()->first() ?? 'Unable to approve redemption.';
+            $first = collect($e->errors())->flatten()->first() ?? 'Unable to fulfill this reward.';
 
             return [
                 'result'  => 'failed',
@@ -273,20 +217,117 @@ class QrController extends Controller
             'qr_code_id'      => $qr->id,
             'scanned_by'      => auth()->id(),
             'branch_id'       => $request->branch_id,
-            'action'          => 'approve_redemption',
+            'action'          => 'fulfill_redemption',
             'result'          => 'success',
             'points_affected' => 0,
-            'notes'           => 'Approved '.$approved->reward?->name.' for '.$approved->user?->name,
+            'notes'           => 'Fulfilled '.$fulfilled->pointItem?->name.' for '.$fulfilled->user?->name,
         ]);
+
+        $memberCode = $fulfilled->user
+            ? QrCode::getOrCreateForUser($fulfilled->user)->code
+            : null;
 
         return [
             'result'      => 'success',
-            'message'     => ($approved->reward?->name ?? 'Reward').' approved. Please fulfill it at the counter.',
-            'reward'      => $approved->reward,
-            'redemption'  => $approved,
-            'points_used' => (int) $approved->points_used,
-            'points_left' => (int) ($approved->user?->points ?? 0),
-            'user'        => $approved->user?->only(['id', 'name', 'email']),
+            'message'     => ($fulfilled->pointItem?->name ?? 'Reward').' fulfilled.',
+            'item'        => $fulfilled->pointItem,
+            'reward'      => $fulfilled->pointItem,
+            'redemption'  => $fulfilled,
+            'points_used' => (int) $fulfilled->points_used,
+            'points_left' => (int) ($fulfilled->user?->points ?? 0),
+            'user'        => $fulfilled->user?->only(['id', 'name', 'email']),
+            'member_code' => $memberCode,
+        ];
+    }
+
+    private function handleTopUpCard(QrCode $qr, Request $request): array
+    {
+        $admin = $request->user();
+        if (! $admin instanceof Admin || ! AdminPermissions::allows($admin, 'card.confirm')) {
+            return [
+                'result'  => 'failed',
+                'message' => 'You do not have access to confirm Card top-ups.',
+            ];
+        }
+
+        if ($qr->type !== 'user') {
+            QrScan::create([
+                'qr_code_id' => $qr->id,
+                'scanned_by' => auth()->id(),
+                'branch_id'  => $request->branch_id,
+                'action'     => 'topup_card',
+                'result'     => 'failed',
+                'notes'      => 'QR is not a member loyalty QR',
+            ]);
+
+            return [
+                'result'  => 'failed',
+                'message' => 'Scan the member’s Daleachious Card QR, not a redemption QR.',
+            ];
+        }
+
+        $user = User::find($qr->qrable_id);
+        if (! $user) {
+            return [
+                'result'  => 'failed',
+                'message' => 'Customer not found.',
+            ];
+        }
+
+        if (! $request->filled('amount')) {
+            return [
+                'result'  => 'failed',
+                'message' => 'Enter the top-up amount before scanning.',
+                'user'    => $user->only(['id', 'name', 'email']),
+            ];
+        }
+
+        try {
+            $txn = $this->cards->topUpInStore($user, $request->input('amount'), 'in_store');
+        } catch (ValidationException $e) {
+            $first = collect($e->errors())->flatten()->first() ?? 'Unable to top up this Card.';
+            $card = $this->cards->getOrCreateCard($user);
+
+            QrScan::create([
+                'qr_code_id' => $qr->id,
+                'scanned_by' => auth()->id(),
+                'branch_id'  => $request->branch_id,
+                'action'     => 'topup_card',
+                'result'     => 'failed',
+                'notes'      => $first,
+            ]);
+
+            return [
+                'result'                   => 'failed',
+                'message'                  => $first,
+                'user'                     => $user->only(['id', 'name', 'email']),
+                'card_balance'             => (float) $card->balance,
+                'formatted_card_balance'   => $this->cards->formatPeso($card->balance),
+            ];
+        }
+
+        $card = $txn->card()->first();
+
+        QrScan::create([
+            'qr_code_id'      => $qr->id,
+            'scanned_by'      => auth()->id(),
+            'branch_id'       => $request->branch_id,
+            'action'          => 'topup_card',
+            'result'          => 'success',
+            'points_affected' => 0,
+            'notes'           => $this->cards->formatPeso($txn->amount).' Card top-up for '.$user->name.' ('.$txn->reference.')',
+        ]);
+
+        return [
+            'result'                 => 'success',
+            'message'                => $this->cards->formatPeso($txn->amount).' added to the Daleachious Card.',
+            'reference'              => $txn->reference,
+            'amount'                 => (float) $txn->amount,
+            'formatted_amount'       => $this->cards->formatPeso($txn->amount),
+            'card_balance'           => $card ? (float) $card->balance : null,
+            'formatted_card_balance' => $card ? $this->cards->formatPeso($card->balance) : null,
+            'transaction'            => $this->cards->presentTransaction($txn->load(['user', 'card'])),
+            'user'                   => $user->only(['id', 'name', 'email']),
         ];
     }
 
@@ -309,7 +350,6 @@ class QrController extends Controller
             ];
         }
 
-        // Find user directly by ID
         $user = User::find($qr->qrable_id);
 
         if (! $user) {
@@ -319,46 +359,125 @@ class QrController extends Controller
             ];
         }
 
-        $settings = LoyaltyPointSetting::getSettings();
-        $amount   = (float) ($request->amount ?? 0);
-        $points   = (int) ($request->points ?? $settings->calculatePoints($amount));
-
-        if ($points <= 0) {
+        $method = (string) $request->input('payment_method', '');
+        $allowed = array_keys(config('daleachious.purchase_payment_methods', []));
+        if (! in_array($method, $allowed, true)) {
             return [
                 'result'  => 'failed',
-                'message' => 'No points to award. Check the amount or points value.',
+                'message' => 'Choose how the member paid: Daleachious Card, cash, credit/debit, GCash, or Maya.',
+                'user'    => $user->only(['id', 'name', 'email']),
             ];
         }
 
-        // Award points
-        LoyaltyPoint::create([
-            'user_id'     => $user->id,
-            'points'      => $points,
-            'type'        => 'earned',
-            'description' => 'Points earned via QR scan at branch',
-        ]);
+        $admin = $request->user();
+        $isCardPay = LoyaltyPointSetting::isCardPayment($method);
+        if ($isCardPay && (! $admin instanceof Admin || ! AdminPermissions::allows($admin, 'card.confirm'))) {
+            return [
+                'result'  => 'failed',
+                'message' => 'You do not have access to charge a Daleachious Card.',
+                'user'    => $user->only(['id', 'name', 'email']),
+            ];
+        }
 
-        $user->increment('points', $points);
+        if (! $request->filled('amount') || (float) $request->amount <= 0) {
+            return [
+                'result'  => 'failed',
+                'message' => 'Enter the purchase amount before scanning.',
+                'user'    => $user->only(['id', 'name', 'email']),
+            ];
+        }
 
-        QrScan::create([
-            'qr_code_id'      => $qr->id,
-            'scanned_by'      => auth()->id(),
-            'branch_id'       => $request->branch_id,
-            'action'          => 'earn_points',
-            'result'          => 'success',
-            'points_affected' => $points,
-            'notes'           => $points . ' points awarded to ' . $user->name,
-        ]);
+        $amount = (float) $request->amount;
+        $settings = LoyaltyPointSetting::getSettings();
+        $points = $settings->calculatePoints($amount, $method);
+        $methodLabel = (string) config('daleachious.purchase_payment_methods.'.$method, $method);
 
-        $freshUser = $user->fresh();
+        try {
+            return DB::transaction(function () use (
+                $qr,
+                $request,
+                $user,
+                $amount,
+                $points,
+                $method,
+                $methodLabel,
+                $isCardPay,
+                $settings,
+            ) {
+                $cardTxn = null;
+                if ($isCardPay) {
+                    $cardTxn = $this->cards->debitForPurchase($user, $amount, $method);
+                }
 
-        return [
-            'result'        => 'success',
-            'message'       => $points . ' points awarded successfully!',
-            'points_earned' => $points,
-            'total_points'  => $freshUser->points,
-            'user'          => $user->only(['id', 'name', 'email']),
-        ];
+                if ($points > 0) {
+                    LoyaltyPoint::create([
+                        'user_id'     => $user->id,
+                        'points'      => $points,
+                        'type'        => 'earned',
+                        'description' => $methodLabel.' purchase of '.$this->cards->formatPeso($amount),
+                        'reference_type' => $cardTxn ? DaleachiousCardTransaction::class : null,
+                        'reference_id'   => $cardTxn?->id,
+                    ]);
+                    $user->increment('points', $points);
+                }
+
+                QrScan::create([
+                    'qr_code_id'      => $qr->id,
+                    'scanned_by'      => auth()->id(),
+                    'branch_id'       => $request->branch_id,
+                    'action'          => 'earn_points',
+                    'result'          => 'success',
+                    'points_affected' => $points,
+                    'notes'           => $this->cards->formatPeso($amount).' '.$methodLabel.' — '.$points.' Points for '.$user->name,
+                ]);
+
+                $freshUser = $user->fresh();
+                $card = $this->cards->getOrCreateCard($freshUser);
+
+                $message = $isCardPay
+                    ? $this->cards->formatPeso($amount).' charged to the Daleachious Card. '.$points.' Points added.'
+                    : $points.' Points added for a '.$methodLabel.' purchase.';
+
+                return [
+                    'result'                   => 'success',
+                    'message'                  => $message,
+                    'points_earned'            => $points,
+                    'total_points'             => $freshUser->points,
+                    'payment_method'           => $method,
+                    'payment_method_label'     => $methodLabel,
+                    'amount'                   => $amount,
+                    'formatted_amount'         => $this->cards->formatPeso($amount),
+                    'peso_per_point'           => $settings->pesoPerPointFor($method),
+                    'card_charged'             => $isCardPay,
+                    'card_balance'             => (float) $card->balance,
+                    'formatted_card_balance'   => $this->cards->formatPeso($card->balance),
+                    'reference'                => $cardTxn?->reference,
+                    'user'                     => $freshUser->only(['id', 'name', 'email']),
+                ];
+            });
+        } catch (ValidationException $e) {
+            $first = collect($e->errors())->flatten()->first() ?? 'Unable to complete this purchase.';
+            $card = $this->cards->getOrCreateCard($user);
+
+            QrScan::create([
+                'qr_code_id' => $qr->id,
+                'scanned_by' => auth()->id(),
+                'branch_id'  => $request->branch_id,
+                'action'     => 'earn_points',
+                'result'     => 'failed',
+                'notes'      => $first,
+            ]);
+
+            return [
+                'result'                 => 'failed',
+                'message'                => $first,
+                'payment_method'         => $method,
+                'payment_method_label'   => $methodLabel,
+                'card_balance'           => (float) $card->balance,
+                'formatted_card_balance' => $this->cards->formatPeso($card->balance),
+                'user'                   => $user->only(['id', 'name', 'email']),
+            ];
+        }
     }
 
     // ── Handle: Redeem Reward ─────────────────────────────
@@ -371,10 +490,12 @@ class QrController extends Controller
             ];
         }
 
-        if (! $request->reward_id) {
+        $itemId = $request->point_item_id ?? $request->reward_id;
+
+        if (! $itemId) {
             return [
                 'result'  => 'failed',
-                'message' => 'reward_id is required for redeeming.',
+                'message' => 'point_item_id is required for redeeming.',
             ];
         }
 
@@ -388,24 +509,24 @@ class QrController extends Controller
             ];
         }
 
-        $reward = Reward::find($request->reward_id);
+        $item = PointItem::find($itemId);
 
-        if (! $reward || ! $reward->is_active) {
+        if (! $item || ! $item->is_active) {
             return [
                 'result'  => 'failed',
-                'message' => 'Reward not found or inactive.',
+                'message' => 'Item not found or inactive.',
             ];
         }
 
         try {
-            $result = $this->redemptions->redeemApproved($user, $reward);
+            $result = $this->redemptions->redeemApproved($user, $item);
         } catch (ValidationException $e) {
-            $first = collect($e->errors())->flatten()->first() ?? 'Unable to redeem reward.';
+            $first = collect($e->errors())->flatten()->first() ?? 'Unable to redeem this item.';
 
             return [
                 'result'           => 'failed',
                 'message'          => $first,
-                'points_required'  => (int) $reward->points_required,
+                'points_required'  => (int) $item->points_required,
                 'points_available' => (int) $user->fresh()->points,
             ];
         }
@@ -417,13 +538,14 @@ class QrController extends Controller
             'action'          => 'redeem_reward',
             'result'          => 'success',
             'points_affected' => -$result['redemption']->points_used,
-            'notes'           => 'Redeemed: '.$reward->name.' by '.$user->name,
+            'notes'           => 'Redeemed: '.$item->name.' by '.$user->name,
         ]);
 
         return [
             'result'      => 'success',
-            'message'     => 'Reward redeemed successfully!',
-            'reward'      => $result['reward'],
+            'message'     => 'Points redeemed successfully!',
+            'item'        => $result['item'],
+            'reward'      => $result['item'],
             'redemption'  => $result['redemption'],
             'points_used' => (int) $result['redemption']->points_used,
             'points_left' => $result['points_left'],
@@ -431,109 +553,98 @@ class QrController extends Controller
         ];
     }
 
-    // ── Handle: Verify Order ──────────────────────────────
-    private function handleVerifyOrder(QrCode $qr, Request $request): array
+    // ── LOOKUP a QR code (read-only; opens customer counter page) ──
+    public function lookup(Request $request)
     {
-        if ($qr->type !== 'order') {
-            return [
-                'result'  => 'failed',
-                'message' => 'This QR is not an order QR.',
-            ];
-        }
-
-        // Find order directly by ID
-        $order = Order::find($qr->qrable_id);
-
-        if (! $order) {
-            return [
-                'result'  => 'failed',
-                'message' => 'Order not found.',
-            ];
-        }
-
-        $lockedBranch = AdminBranchScope::branchId();
-        if ($lockedBranch && (int) $order->branch_id !== $lockedBranch) {
-            return [
-                'result'  => 'failed',
-                'message' => 'This order belongs to another branch.',
-            ];
-        }
-
-        if ($order->status === 'cancelled') {
-            return [
-                'result'  => 'failed',
-                'message' => 'This order has been cancelled.',
-            ];
-        }
-
-        if ($order->status === 'completed') {
-            return [
-                'result'  => 'failed',
-                'message' => 'This order is already completed.',
-                'order'   => $order,
-            ];
-        }
-
-        if ($order->status !== 'ready') {
-            return [
-                'result'  => 'failed',
-                'message' => 'This order is not ready to serve yet ('.$order->status.').',
-                'order'   => $order,
-            ];
-        }
-
-        $order->update([
-            'status'       => 'completed',
-            'completed_at' => now(),
+        $request->validate([
+            'code' => 'required|string',
         ]);
 
-        $pointsAward = ['awarded' => false, 'points' => 0, 'total_points' => null];
-        if ($order->user_id && $order->points_earned > 0) {
-            $pointsAward = $this->loyaltyPoints->awardForOrder($order->fresh());
+        $code = strtoupper(trim((string) $request->code));
+        $qr = QrCode::where('code', $code)->first();
+
+        if (! $qr) {
+            return response()->json([
+                'result'  => 'failed',
+                'message' => 'Invalid QR code.',
+            ], 404);
         }
 
-        $qr->update(['is_active' => false]);
+        if ($qr->isExpired()) {
+            return response()->json([
+                'result'  => 'expired',
+                'message' => 'This QR code has expired.',
+                'qr_type' => $qr->type,
+            ], 422);
+        }
 
-        AuditLogService::log(
-            'updated',
-            'order',
-            'Order '.$order->order_number.' served via QR scan',
-            $order
-        );
+        if (! $qr->isValid()) {
+            return response()->json([
+                'result'  => 'failed',
+                'message' => 'This QR code is no longer valid.',
+                'qr_type' => $qr->type,
+            ], 422);
+        }
 
-        $servedLabel = match ($order->type) {
-            'delivery' => 'delivered',
-            'dine_in'  => 'served',
-            default    => 'picked up',
-        };
+        $isRedemptionQr = $qr->type === 'redemption'
+            || in_array($qr->purpose, ['point_redemption', 'reward_redemption'], true);
 
-        QrScan::create([
-            'qr_code_id' => $qr->id,
-            'scanned_by' => auth()->id(),
-            'branch_id'  => $request->branch_id,
-            'action'     => 'verify_order',
-            'result'     => 'success',
-            'notes'      => 'Order '.$order->order_number.' '.$servedLabel,
-        ]);
+        if ($isRedemptionQr) {
+            $redemption = Redemption::query()->with('user')->find($qr->qrable_id);
 
-        return [
-            'result'  => 'success',
-            'message' => 'Order '.$order->order_number.' '.$servedLabel.'.',
-            'order'   => $order->fresh()->load(['items.addons', 'user']),
-            'points_awarded' => (int) $pointsAward['points'],
-            'points_newly_credited' => (bool) $pointsAward['awarded'],
-        ];
+            if (! $redemption?->user) {
+                return response()->json([
+                    'result'  => 'failed',
+                    'message' => 'Customer not found for this QR.',
+                ], 404);
+            }
+
+            $payload = $this->customerLookupPayload($redemption->user, $code);
+            $payload['qr_type'] = 'redemption';
+
+            return response()->json($payload);
+        }
+
+        if ($qr->type !== 'user') {
+            return response()->json([
+                'result'  => 'failed',
+                'message' => 'This QR is not a member loyalty QR.',
+                'qr_type' => $qr->type,
+            ], 422);
+        }
+
+        $user = User::find($qr->qrable_id);
+
+        if (! $user) {
+            return response()->json([
+                'result'  => 'failed',
+                'message' => 'Customer not found.',
+            ], 404);
+        }
+
+        $payload = $this->customerLookupPayload($user, $code);
+        $payload['qr_type'] = 'member';
+
+        return response()->json($payload);
     }
 
-    // ── GET all QR codes ──────────────────────────────────
-    public function index(Request $request)
+    private function customerLookupPayload(User $user, string $code): array
     {
-        $qrCodes = QrCode::with(['scans'])
-            ->when($request->type, fn($q) => $q->where('type', $request->type))
-            ->orderByDesc('created_at')
-            ->get();
+        $card = $this->cards->getOrCreateCard($user);
+        $settings = LoyaltyPointSetting::getSettings();
 
-        return response()->json($qrCodes);
+        return [
+            'result'                 => 'success',
+            'code'                   => $code,
+            'user'                   => $user->only(['id', 'name', 'email', 'phone', 'points']),
+            'card_balance'           => (float) $card->balance,
+            'formatted_card_balance' => $this->cards->formatPeso($card->balance),
+            'earn_rates'             => [
+                'daleachious_card' => $settings->pesoPerPointFor(LoyaltyPointSetting::CARD_PAYMENT),
+                'other'            => $settings->pesoPerPointFor('cash'),
+            ],
+            'payment_methods'        => config('daleachious.purchase_payment_methods', []),
+        ];
     }
 
     // ── GET scan history ──────────────────────────────────
@@ -550,34 +661,4 @@ class QrController extends Controller
         return response()->json($scans);
     }
 
-    // ── DEACTIVATE a QR code ──────────────────────────────
-    public function deactivate(QrCode $qrCode)
-    {
-        $qrCode->update(['is_active' => false]);
-
-        return response()->json([
-            'message' => 'QR code deactivated successfully',
-            'qr_code' => $qrCode,
-        ]);
-    }
-
-    // ── GET user QR code ──────────────────────────────────
-    public function getUserQr(User $user)
-    {
-        $qr = QrCode::where('qrable_type', User::class)
-            ->where('qrable_id', $user->id)
-            ->first();
-
-        if (! $qr) {
-            return response()->json([
-                'message' => 'No QR code found for this user.',
-            ], 404);
-        }
-
-        return response()->json([
-            'qr_code'  => $qr,
-            'is_valid' => $qr->isValid(),
-            'user'     => $user->only(['id', 'name', 'email', 'points']),
-        ]);
-    }
 }

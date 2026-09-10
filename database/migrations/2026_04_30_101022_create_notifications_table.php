@@ -25,7 +25,7 @@ return new class extends Migration
             $table->string('title');
             $table->text('body');
             $table->string('type');
-            // promo, order_update, points, general
+            // promo, points, general
             $table->json('data')->nullable(); // extra payload
             $table->string('target');
             // all, specific_user, specific_tier

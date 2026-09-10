@@ -9,8 +9,12 @@ class LoyaltyPointSetting extends Model
 {
     use HasFactory;
 
+    public const CARD_PAYMENT = 'daleachious_card';
+
     protected $fillable = [
         'peso_per_point',
+        'card_peso_per_point',
+        'other_peso_per_point',
         'bonus_enabled',
         'bonus_multiplier',
         'bonus_days',
@@ -27,6 +31,8 @@ class LoyaltyPointSetting extends Model
         'expiry_enabled' => 'boolean',
         'bonus_days'     => 'array',   // stores days as array e.g. ["Saturday","Sunday"]
         'peso_per_point' => 'float',
+        'card_peso_per_point'          => 'float',
+        'other_peso_per_point'         => 'float',
         'bonus_multiplier'             => 'float',
         'min_purchase'                 => 'float',
         'max_points_per_transaction'   => 'integer',
@@ -37,25 +43,43 @@ class LoyaltyPointSetting extends Model
     public static function getSettings(): self
     {
         return self::firstOrCreate([], [
-            'peso_per_point'   => 10.00,
-            'bonus_enabled'    => false,
-            'bonus_multiplier' => 2.00,
-            'expiry_enabled'   => false,
-            'expiry_days'      => 365,
-            'min_purchase'     => 0,
+            'peso_per_point'         => 50.00,
+            'card_peso_per_point'    => 25.00,
+            'other_peso_per_point'   => 50.00,
+            'bonus_enabled'          => false,
+            'bonus_multiplier'       => 2.00,
+            'expiry_enabled'         => false,
+            'expiry_days'            => 365,
+            'min_purchase'           => 0,
         ]);
     }
 
+    public static function isCardPayment(?string $paymentMethod): bool
+    {
+        return $paymentMethod === self::CARD_PAYMENT;
+    }
+
+    public function pesoPerPointFor(?string $paymentMethod): float
+    {
+        if (self::isCardPayment($paymentMethod)) {
+            $rate = (float) ($this->card_peso_per_point ?: config('daleachious.points.card_peso_per_point', 25));
+        } else {
+            $rate = (float) ($this->other_peso_per_point ?: config('daleachious.points.other_peso_per_point', 50));
+        }
+
+        return $rate > 0 ? $rate : 50.0;
+    }
+
     // Calculate points for a given purchase amount
-    public function calculatePoints(float $amount): int
+    public function calculatePoints(float $amount, ?string $paymentMethod = null): int
     {
         // Check minimum purchase
-        if ($amount < $this->min_purchase) {
+        if ($this->min_purchase > 0 && $amount < $this->min_purchase) {
             return 0;
         }
 
-        // Base points
-        $points = (int) floor($amount / $this->peso_per_point);
+        $rate = $this->pesoPerPointFor($paymentMethod);
+        $points = (int) floor($amount / $rate);
 
         // Apply bonus multiplier if enabled
         if ($this->bonus_enabled && $this->isBonusPeriod()) {

@@ -3,9 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Order;
 use App\Models\Redemption;
-use App\Models\Transaction;
 use App\Models\User;
 use App\Services\AuditLogService;
 use App\Services\DeveloperPurgeService;
@@ -17,16 +15,6 @@ class DeveloperPurgeController extends Controller
         protected DeveloperPurgeService $purge,
     ) {}
 
-    public function orders(): JsonResponse
-    {
-        return $this->run('orders', fn () => $this->purge->orders());
-    }
-
-    public function transactions(): JsonResponse
-    {
-        return $this->run('transactions', fn () => $this->purge->transactions());
-    }
-
     public function members(): JsonResponse
     {
         return $this->run('members', fn () => $this->purge->members());
@@ -37,25 +25,14 @@ class DeveloperPurgeController extends Controller
         return $this->run('redemptions', fn () => $this->purge->redemptions());
     }
 
+    public function points(): JsonResponse
+    {
+        return $this->run('points', fn () => $this->purge->points());
+    }
+
     public function rewards(): JsonResponse
     {
-        return $this->run('rewards', fn () => $this->purge->rewards());
-    }
-
-    public function destroyOrder(Order $order): JsonResponse
-    {
-        $label = $order->order_number;
-        $this->purge->order($order);
-
-        return $this->one('orders', 'order '.$label);
-    }
-
-    public function destroyTransaction(Transaction $transaction): JsonResponse
-    {
-        $label = $transaction->reference_number;
-        $this->purge->transaction($transaction);
-
-        return $this->one('transactions', 'transaction '.$label);
+        return $this->points();
     }
 
     public function destroyMember(User $user): JsonResponse

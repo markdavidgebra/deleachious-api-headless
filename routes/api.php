@@ -2,14 +2,9 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Admin\AuthController as AdminAuthController;
-use App\Http\Controllers\Api\Admin\CategoryController;
-use App\Http\Controllers\Api\Admin\ProductController;
 use App\Http\Controllers\Api\Admin\MemberController;
 use App\Http\Controllers\Api\Admin\LoyaltyPointSettingController;
 use App\Http\Controllers\Api\Admin\RewardController;
-use App\Http\Controllers\Api\Admin\RedemptionController;
-use App\Http\Controllers\Api\Admin\OrderController;
-use App\Http\Controllers\Api\Admin\TransactionController;
 use App\Http\Controllers\Api\User\AuthController as UserAuthController;
 use App\Http\Controllers\Api\Admin\BranchController;
 use App\Http\Controllers\Api\Admin\DeveloperPurgeController;
@@ -20,11 +15,11 @@ use App\Http\Controllers\Api\Admin\QrController;
 use App\Http\Controllers\Api\Admin\NotificationController;
 use App\Http\Controllers\Api\User\NotificationController as UserNotificationController;
 use App\Http\Controllers\Api\Admin\ShopSettingController;
-use App\Http\Controllers\Api\User\OrderController as UserOrderController;
 use App\Http\Controllers\Api\User\RewardController as UserRewardController;
 use App\Http\Controllers\Api\User\RedemptionController as UserRedemptionController;
 use App\Http\Controllers\Api\User\LoyaltyQrController as UserLoyaltyQrController;
-use App\Http\Controllers\Api\Webhook\PaymongoWebhookController;
+use App\Http\Controllers\Api\User\CardController as UserCardController;
+use App\Http\Controllers\Api\Admin\CardTopUpController as AdminCardTopUpController;
 use App\Http\Controllers\DeleteAccountController;
 
 // ── Account deletion (Google Play User Data policy) ─────────────────
@@ -48,15 +43,10 @@ Route::prefix('admin')->group(function () {
         Route::middleware('admin.developer')->group(function () {
             Route::get('studio', [DeveloperStudioController::class, 'show']);
             Route::get('studio/activity', [DeveloperStudioController::class, 'activity']);
-            Route::get('studio/payments', [DeveloperStudioController::class, 'payments']);
-            Route::post('studio/payments/{transaction}/recheck', [DeveloperStudioController::class, 'recheck']);
-            Route::delete('orders/all', [DeveloperPurgeController::class, 'orders']);
-            Route::delete('transactions/all', [DeveloperPurgeController::class, 'transactions']);
             Route::delete('members/all', [DeveloperPurgeController::class, 'members']);
             Route::delete('redemptions/all', [DeveloperPurgeController::class, 'redemptions']);
-            Route::delete('rewards/all', [DeveloperPurgeController::class, 'rewards']);
-            Route::delete('orders/{order}', [DeveloperPurgeController::class, 'destroyOrder']);
-            Route::delete('transactions/{transaction}', [DeveloperPurgeController::class, 'destroyTransaction']);
+            Route::delete('points/all', [DeveloperPurgeController::class, 'points']);
+            Route::delete('rewards/all', [DeveloperPurgeController::class, 'points']);
             Route::delete('members/{user}', [DeveloperPurgeController::class, 'destroyMember']);
             Route::delete('redemptions/{redemption}', [DeveloperPurgeController::class, 'destroyRedemption']);
         });
@@ -68,27 +58,6 @@ Route::prefix('admin')->group(function () {
             Route::delete('roles/{role}', [RoleController::class, 'destroy']);
         });
 
-        Route::middleware('admin.can:products')->group(function () {
-            Route::get('categories', [CategoryController::class, 'index']);
-            Route::get('categories/{category}', [CategoryController::class, 'show']);
-            Route::get('products', [ProductController::class, 'index']);
-            Route::get('products/{product}', [ProductController::class, 'show']);
-        });
-        Route::middleware('admin.can:products.create')->group(function () {
-            Route::post('categories', [CategoryController::class, 'store']);
-            Route::post('products', [ProductController::class, 'store']);
-        });
-        Route::middleware('admin.can:products.update')->group(function () {
-            Route::patch('categories/{category}', [CategoryController::class, 'update']);
-            Route::put('categories/{category}', [CategoryController::class, 'update']);
-            Route::patch('products/{product}', [ProductController::class, 'update']);
-            Route::put('products/{product}', [ProductController::class, 'update']);
-        });
-        Route::middleware('admin.can:products.delete')->group(function () {
-            Route::delete('categories/{category}', [CategoryController::class, 'destroy']);
-            Route::delete('products/{product}', [ProductController::class, 'destroy']);
-        });
-
         Route::middleware('admin.can:members')->group(function () {
             Route::get('members', [MemberController::class, 'index']);
             Route::get('members/{user}', [MemberController::class, 'show']);
@@ -97,15 +66,21 @@ Route::prefix('admin')->group(function () {
         Route::post('loyalty-points/{user}/adjust', [LoyaltyPointSettingController::class, 'adjustPoints'])
             ->middleware('admin.can:members.adjust');
 
-        Route::middleware('admin.can:loyalty.rewards,loyalty.manage')->group(function () {
+        Route::middleware('admin.can:loyalty.points,loyalty.rewards,loyalty.manage')->group(function () {
+            Route::get('points', [RewardController::class, 'index']);
+            Route::get('points/{pointItem}', [RewardController::class, 'show']);
             Route::get('rewards', [RewardController::class, 'index']);
-            Route::get('rewards/{reward}', [RewardController::class, 'show']);
+            Route::get('rewards/{pointItem}', [RewardController::class, 'show']);
         });
         Route::middleware('admin.can:loyalty.manage')->group(function () {
+            Route::post('points', [RewardController::class, 'store']);
+            Route::patch('points/{pointItem}', [RewardController::class, 'update']);
+            Route::put('points/{pointItem}', [RewardController::class, 'update']);
+            Route::delete('points/{pointItem}', [RewardController::class, 'destroy']);
             Route::post('rewards', [RewardController::class, 'store']);
-            Route::patch('rewards/{reward}', [RewardController::class, 'update']);
-            Route::put('rewards/{reward}', [RewardController::class, 'update']);
-            Route::delete('rewards/{reward}', [RewardController::class, 'destroy']);
+            Route::patch('rewards/{pointItem}', [RewardController::class, 'update']);
+            Route::put('rewards/{pointItem}', [RewardController::class, 'update']);
+            Route::delete('rewards/{pointItem}', [RewardController::class, 'destroy']);
         });
         Route::middleware('admin.can:loyalty.settings')->group(function () {
             Route::get('loyalty-points/settings', [LoyaltyPointSettingController::class, 'getSettings']);
@@ -116,43 +91,25 @@ Route::prefix('admin')->group(function () {
         Route::get('loyalty-points/{user}/history', [LoyaltyPointSettingController::class, 'pointsHistory'])
             ->middleware('admin.can:members,loyalty');
 
-        Route::middleware('admin.can:redemptions')->group(function () {
-            Route::get('redemptions', [RedemptionController::class, 'index']);
-        });
-        Route::patch('redemptions/{redemption}/status', [RedemptionController::class, 'updateStatus'])
-            ->middleware('admin.can:redemptions.review');
-
-        Route::middleware('admin.can:orders')->group(function () {
-            Route::get('orders', [OrderController::class, 'index']);
-            Route::get('orders/{order}', [OrderController::class, 'show']);
-        });
-        Route::post('orders', [OrderController::class, 'store'])
-            ->middleware('admin.can:orders.update');
-        Route::patch('orders/{order}/status', [OrderController::class, 'updateStatus'])
-            ->middleware('admin.can:orders.update');
-        Route::patch('orders/{order}/cancel', [OrderController::class, 'cancel'])
-            ->middleware('admin.can:orders.cancel');
-
-        Route::middleware('admin.can:transactions')->group(function () {
-            Route::get('transactions', [TransactionController::class, 'index']);
-            Route::get('transactions/summary', [TransactionController::class, 'summary']);
-            Route::get('transactions/{transaction}', [TransactionController::class, 'show']);
-        });
-        Route::post('transactions', [TransactionController::class, 'store'])
-            ->middleware('admin.can:transactions.create,orders.pay');
-        Route::patch('transactions/{transaction}/refund', [TransactionController::class, 'refund'])
-            ->middleware('admin.can:transactions.refund');
-
         Route::get('branches', [BranchController::class, 'index']);
+        Route::get('locations', [BranchController::class, 'index']);
         Route::middleware('admin.can:branches')->group(function () {
             Route::get('branches/{branch}', [BranchController::class, 'show']);
             Route::get('branches/{branch}/stats', [BranchController::class, 'stats']);
+            Route::get('locations/{branch}', [BranchController::class, 'show']);
+            Route::get('locations/{branch}/stats', [BranchController::class, 'stats']);
         });
         Route::post('branches', [BranchController::class, 'store'])
             ->middleware('admin.can:branches.create');
         Route::patch('branches/{branch}', [BranchController::class, 'update'])
             ->middleware('admin.can:branches.update');
         Route::delete('branches/{branch}', [BranchController::class, 'destroy'])
+            ->middleware('admin.can:branches.delete');
+        Route::post('locations', [BranchController::class, 'store'])
+            ->middleware('admin.can:branches.create');
+        Route::patch('locations/{branch}', [BranchController::class, 'update'])
+            ->middleware('admin.can:branches.update');
+        Route::delete('locations/{branch}', [BranchController::class, 'destroy'])
             ->middleware('admin.can:branches.delete');
 
         Route::middleware('admin.can:staff')->group(function () {
@@ -168,14 +125,9 @@ Route::prefix('admin')->group(function () {
         Route::delete('staff/{admin}', [StaffController::class, 'destroy'])
             ->middleware('admin.can:staff.delete');
 
-        Route::middleware('admin.can:qr.generate')->group(function () {
-            Route::get('qr', [QrController::class, 'index']);
-            Route::post('qr/user/{user}', [QrController::class, 'generateUserQr']);
-            Route::get('qr/user/{user}', [QrController::class, 'getUserQr']);
-            Route::post('qr/order/{order}', [QrController::class, 'generateOrderQr']);
-            Route::patch('qr/{qrCode}/deactivate', [QrController::class, 'deactivate']);
-        });
         Route::post('qr/scan', [QrController::class, 'scan'])
+            ->middleware('admin.can:qr.scan');
+        Route::get('qr/lookup', [QrController::class, 'lookup'])
             ->middleware('admin.can:qr.scan');
         Route::get('qr/scans', [QrController::class, 'scanHistory'])
             ->middleware('admin.can:qr.history');
@@ -194,25 +146,33 @@ Route::prefix('admin')->group(function () {
             Route::post('shop-settings/logo',     [ShopSettingController::class, 'uploadLogo']);
             Route::delete('shop-settings/logo',   [ShopSettingController::class, 'deleteLogo']);
         });
+
+        Route::middleware('admin.can:card')->group(function () {
+            Route::get('card-topups', [AdminCardTopUpController::class, 'index']);
+            Route::get('card-topups/{reference}', [AdminCardTopUpController::class, 'show']);
+        });
+        Route::post('card-topups/{reference}/complete', [AdminCardTopUpController::class, 'complete'])
+            ->middleware('admin.can:card.confirm');
+        Route::post('card-topups/{reference}/fail', [AdminCardTopUpController::class, 'fail'])
+            ->middleware('admin.can:card.confirm');
     });
 });
 
 // ── User (Mobile) Routes ──────────────────────────────────
 Route::prefix('user')->group(function () {
-    // Public
-    Route::post('/register', [UserAuthController::class, 'register']);
+    Route::post('/register/send-code', [UserAuthController::class, 'sendSignupCode'])
+        ->middleware('throttle:6,1');
+    Route::post('/register/verify-code', [UserAuthController::class, 'verifySignupCode'])
+        ->middleware('throttle:10,1');
+    Route::post('/register', [UserAuthController::class, 'register'])
+        ->middleware('throttle:6,1');
     Route::post('/login',    [UserAuthController::class, 'login']);
-    Route::post('/social-login', [UserAuthController::class, 'socialLogin']);
     Route::post('/forgot-password', [UserAuthController::class, 'forgotPassword']);
     Route::post('/reset-password', [UserAuthController::class, 'resetPassword']);
-    Route::get('/products',   [ProductController::class,  'index']);
-    Route::get('/categories', [CategoryController::class, 'index']);
 
-    // Public read-only support data for the mobile UI
     Route::get('/shop-settings',  fn () => response()->json(\App\Models\ShopSetting::getSettings()));
 
-    // Active store/branch directory shown in the mobile Stores tab.
-    Route::get('/branches', fn () => response()->json(
+    $activeLocations = fn () => response()->json(
         \App\Models\Branch::query()
             ->where('is_active', true)
             ->orderBy('name')
@@ -229,9 +189,10 @@ Route::prefix('user')->group(function () {
                 'latitude',
                 'longitude',
             ])
-    ));
+    );
+    Route::get('/branches', $activeLocations);
+    Route::get('/locations', $activeLocations);
 
-    // Protected
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('/logout', [UserAuthController::class, 'logout']);
         Route::get('/me',      [UserAuthController::class, 'me']);
@@ -240,37 +201,28 @@ Route::prefix('user')->group(function () {
         Route::post('/avatar', [UserAuthController::class, 'uploadAvatar']);
         Route::delete('/avatar', [UserAuthController::class, 'deleteAvatar']);
 
-        // Backward-compatible alias — prefer DELETE /api/account
         Route::delete('/account', [DeleteAccountController::class, 'destroy']);
 
-        // Notifications
         Route::get('notifications',              [UserNotificationController::class, 'index']);
         Route::post('notifications/fcm-token',   [UserNotificationController::class, 'updateFcmToken']);
         Route::patch('notifications/read-all',   [UserNotificationController::class, 'markAllRead']);
         Route::patch('notifications/{notification}/read', [UserNotificationController::class, 'markRead']);
 
-        // ── Orders (PayMongo checkout) ────────────────────────────────
-        Route::prefix('orders')->group(function () {
-            Route::get('/', [UserOrderController::class, 'index']);
-            Route::middleware('throttle:order-checkout')
-                ->post('checkout', [UserOrderController::class, 'checkout']);
-            Route::middleware('throttle:order-confirm')
-                ->post('{order}/confirm', [UserOrderController::class, 'confirm']);
-            Route::get('{order}/pickup-qr', [UserOrderController::class, 'pickupQr']);
-            Route::get('{order}', [UserOrderController::class, 'show']);
-        });
-
-        // ── Rewards / redemptions ─────────────────────────────────────
+        Route::get('points', [UserRewardController::class, 'index']);
         Route::get('rewards', [UserRewardController::class, 'index']);
         Route::get('redemptions', [UserRedemptionController::class, 'index']);
-        Route::middleware('throttle:order-checkout')
+        Route::middleware('throttle:redemptions')
             ->post('redemptions', [UserRedemptionController::class, 'store']);
         Route::get('loyalty-qr', [UserLoyaltyQrController::class, 'show']);
+
+        Route::get('card', [UserCardController::class, 'show']);
+        Route::post('card/topups', [UserCardController::class, 'storeTopUp']);
+        Route::get('card/transactions', [UserCardController::class, 'transactions']);
     });
 });
 
-// ── Webhooks ──────────────────────────────────────────────────────
-Route::prefix('webhooks')->group(function () {
-    Route::middleware(['throttle:paymongo-webhook', 'paymongo.signature'])
-        ->post('paymongo', [PaymongoWebhookController::class, 'handle']);
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/card', [UserCardController::class, 'show']);
+    Route::post('/card/topups', [UserCardController::class, 'storeTopUp']);
+    Route::get('/card/transactions', [UserCardController::class, 'transactions']);
 });

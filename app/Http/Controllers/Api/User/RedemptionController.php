@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api\User;
 
 use App\Http\Controllers\Controller;
-use App\Models\Reward;
+use App\Models\PointItem;
 use App\Services\RewardRedemptionService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -14,14 +14,11 @@ class RedemptionController extends Controller
         protected RewardRedemptionService $redemptions,
     ) {}
 
-    /**
-     * Member's redemption history (newest first).
-     */
     public function index(Request $request)
     {
         $items = $request->user()
             ->redemptions()
-            ->with('reward:id,name,description,type,discount_value,points_required')
+            ->with('pointItem:id,name,description,type,discount_value,points_required')
             ->orderByDesc('created_at')
             ->limit(50)
             ->get();
@@ -30,6 +27,7 @@ class RedemptionController extends Controller
             if ($item->status === 'pending') {
                 $item->setRelation('qrCode', $this->redemptions->ensureRedemptionQr($item));
             }
+            $item->setRelation('reward', $item->pointItem);
         });
 
         return response()->json([
@@ -38,39 +36,40 @@ class RedemptionController extends Controller
         ]);
     }
 
-    /**
-     * Request a reward redemption. Points are held immediately; status is pending
-     * until staff approves fulfillment in admin.
-     */
     public function store(Request $request)
     {
         $request->validate([
-            'reward_id' => 'required|exists:rewards,id',
+            'point_item_id' => 'required_without:reward_id|exists:point_items,id',
+            'reward_id'     => 'required_without:point_item_id|exists:point_items,id',
         ]);
 
-        $reward = Reward::findOrFail($request->reward_id);
+        $item = PointItem::findOrFail($request->point_item_id ?? $request->reward_id);
 
         try {
-            $result = $this->redemptions->request($request->user(), $reward);
+            $result = $this->redemptions->request($request->user(), $item);
         } catch (ValidationException $e) {
             $messages = $e->errors();
-            $first = collect($messages)->flatten()->first() ?? 'Unable to redeem reward.';
+            $first = collect($messages)->flatten()->first() ?? 'Unable to redeem this item.';
 
             return response()->json([
                 'message'          => $first,
                 'errors'           => $messages,
-                'points_required'  => (int) $reward->points_required,
+                'points_required'  => (int) $item->points_required,
                 'points_available' => (int) ($request->user()->fresh()->points ?? 0),
             ], 422);
         }
 
+        $redemption = $result['redemption']->loadMissing('qrCode');
+        $redemption->setRelation('reward', $redemption->pointItem);
+
         return response()->json([
-            'message'     => 'Redemption requested. Show this QR at the counter for staff to scan.',
-            'redemption'  => $result['redemption']->loadMissing('qrCode'),
-            'qr_code'     => $result['qr_code'] ?? $result['redemption']->qrCode,
-            'reward'      => $result['reward'],
-            'points_used' => (int) $result['redemption']->points_used,
-            'points_left' => $result['points_left'],
+            'message'       => 'Redemption requested. Show this QR at the counter for staff to scan.',
+            'redemption'    => $redemption,
+            'qr_code'       => $result['qr_code'] ?? $redemption->qrCode,
+            'item'          => $result['item'],
+            'reward'        => $result['item'],
+            'points_used'   => (int) $result['redemption']->points_used,
+            'points_left'   => $result['points_left'],
         ], 201);
     }
 }

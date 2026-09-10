@@ -365,7 +365,7 @@
                 <ul class="list list-danger">
                     <li>Profile information (name, email, phone number, profile photo)</li>
                     <li>Personal information stored in your account</li>
-                    <li>Loyalty points and rewards balance</li>
+                    <li>Loyalty points balance</li>
                     <li>Saved addresses</li>
                     <li>Push notification tokens and in-app notification history</li>
                     <li>Login sessions and API access tokens</li>
@@ -382,9 +382,8 @@
                     To comply with tax, financial, and regulatory requirements, we may retain certain non-personal records after account deletion, including:
                 </p>
                 <ul class="list">
-                    <li>Order history</li>
-                    <li>Payment transaction records</li>
-                    <li>Refund and financial audit logs</li>
+                    <li>Loyalty point ledgers needed for audit</li>
+                    <li>Staff scan and redemption records needed for audit</li>
                 </ul>
                 <p>
                     These records are retained for up to <strong>7 years</strong>, are disassociated from your personal identity, and are used only for legal, tax, and accounting purposes.

@@ -8,5 +8,7 @@ Route::get('/', function () {
 });
 
 Route::view('/privacy-policy', 'privacy-policy');
+Route::view('/privacy', 'privacy-policy');
+Route::view('/terms', 'terms');
 
 Route::get('/delete-account', [DeleteAccountController::class, 'show'])->name('delete-account');

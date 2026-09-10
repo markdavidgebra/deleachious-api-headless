@@ -8,6 +8,7 @@ use App\Models\Role;
 use App\Support\AdminPermissions;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 use App\Services\AuditLogService;
 
 class AuthController extends Controller
@@ -49,13 +50,13 @@ class AuthController extends Controller
 
         if ($admin->requiresBranch() && ! $admin->branch_id) {
             return response()->json([
-                'message' => 'This account is not assigned to a branch yet.',
+                'message' => 'This account is not assigned to a location yet.',
             ], 403);
         }
 
         if ($admin->isBranchScoped() && $admin->branch && ! $admin->branch->is_active) {
             return response()->json([
-                'message' => 'This branch is currently closed.',
+                'message' => 'This location is currently closed.',
             ], 403);
         }
 
@@ -130,11 +131,18 @@ class AuthController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $request->validate([
-            'password' => 'required|string|min:6',
+        $validated = $request->validate([
+            'current_password' => 'required|string',
+            'password' => 'required|string|min:6|confirmed',
         ]);
 
-        $admin->update(['password' => $request->password]);
+        if (! Hash::check($validated['current_password'], $admin->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['The current password is incorrect.'],
+            ]);
+        }
+
+        $admin->update(['password' => $validated['password']]);
 
         return response()->json(['message' => 'Password updated successfully']);
     }

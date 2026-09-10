@@ -34,10 +34,4 @@ class Branch extends Model
     {
         return $this->hasMany(Admin::class);
     }
-
-    // A branch has many orders
-    public function orders()
-    {
-        return $this->hasMany(Order::class);
-    }
 }

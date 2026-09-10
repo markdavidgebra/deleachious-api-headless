@@ -2,8 +2,8 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 
 class Redemption extends Model
 {
@@ -11,10 +11,14 @@ class Redemption extends Model
 
     protected $fillable = [
         'user_id',
-        'reward_id',
+        'point_item_id',
         'points_used',
         'status',
         'redeemed_at',
+    ];
+
+    protected $appends = [
+        'reward_id',
     ];
 
     protected $casts = [
@@ -22,14 +26,24 @@ class Redemption extends Model
         'points_used' => 'integer',
     ];
 
+    public function getRewardIdAttribute()
+    {
+        return $this->point_item_id;
+    }
+
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
+    public function pointItem()
+    {
+        return $this->belongsTo(PointItem::class);
+    }
+
     public function reward()
     {
-        return $this->belongsTo(Reward::class);
+        return $this->pointItem();
     }
 
     public function qrCode()

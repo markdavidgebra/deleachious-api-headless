@@ -213,7 +213,7 @@ class StaffController extends Controller
     {
         if (in_array($roleName, ['staff', 'cashier'], true) && ! $branchId) {
             abort(response()->json([
-                'message' => 'Assign this person to a branch.',
+                'message' => 'Assign this person to a location.',
             ], 422));
         }
     }

@@ -43,7 +43,7 @@ class NotificationController extends Controller
         $request->validate([
             'title'   => 'required|string|max:100',
             'body'    => 'required|string|max:500',
-            'type'    => 'required|in:promo,order_update,points,general',
+            'type'    => 'required|in:promo,points,general',
             'target'  => 'required|in:all,specific_user',
             'user_id' => 'required_if:target,specific_user|exists:users,id',
             'data'    => 'nullable|array',

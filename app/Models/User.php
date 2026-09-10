@@ -19,8 +19,6 @@ class User extends Authenticatable
         'avatar_path',
         'points',
         'fcm_token',
-        'provider',
-        'provider_id',
     ];
 
     protected $hidden = [
@@ -45,6 +43,16 @@ class User extends Authenticatable
         }
 
         return '/storage/' . ltrim($this->avatar_path, '/');
+    }
+
+    public function daleachiousCard()
+    {
+        return $this->hasOne(DaleachiousCard::class);
+    }
+
+    public function daleachiousCardTransactions()
+    {
+        return $this->hasMany(DaleachiousCardTransaction::class);
     }
 
     public function loyaltyPoints()

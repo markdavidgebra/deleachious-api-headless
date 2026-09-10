@@ -15,8 +15,8 @@ class AccountDeletionService
     /**
      * Permanently delete or anonymize a member account.
      *
-     * Personal data is removed. Order history and financial transaction
-     * records are retained without PII for legal and accounting compliance.
+     * Personal data is removed. Loyalty point history is kept without PII
+     * where needed for legal compliance.
      */
     public function delete(User $user, string $password): void
     {

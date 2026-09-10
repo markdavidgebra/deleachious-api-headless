@@ -21,6 +21,8 @@ class LoyaltyPointSettingController extends Controller
     {
         $request->validate([
             'peso_per_point'              => 'sometimes|numeric|min:1',
+            'card_peso_per_point'         => 'sometimes|numeric|min:1',
+            'other_peso_per_point'        => 'sometimes|numeric|min:1',
             'bonus_enabled'               => 'sometimes|boolean',
             'bonus_multiplier'            => 'sometimes|numeric|min:1',
             'bonus_days'                  => 'sometimes|array',
@@ -34,7 +36,11 @@ class LoyaltyPointSettingController extends Controller
         ]);
 
         $settings = LoyaltyPointSetting::getSettings();
-        $settings->update($request->all());
+        $payload = $request->all();
+        if ($request->filled('other_peso_per_point') && ! $request->filled('peso_per_point')) {
+            $payload['peso_per_point'] = $request->input('other_peso_per_point');
+        }
+        $settings->update($payload);
 
         return response()->json([
             'message'  => 'Loyalty point settings updated successfully',
@@ -47,14 +53,30 @@ class LoyaltyPointSettingController extends Controller
     {
         $request->validate([
             'amount' => 'required|numeric|min:0',
+            'payment_method' => 'nullable|string|in:daleachious_card,cash,credit_debit,gcash,maya',
         ]);
 
         $settings = LoyaltyPointSetting::getSettings();
-        $points   = $settings->calculatePoints((float) $request->amount);
+        $amount = (float) $request->amount;
+        $method = $request->input('payment_method');
+        $cardPoints = $settings->calculatePoints($amount, LoyaltyPointSetting::CARD_PAYMENT);
+        $otherPoints = $settings->calculatePoints($amount, 'cash');
+        $chosen = $method
+            ? $settings->calculatePoints($amount, $method)
+            : $otherPoints;
 
         return response()->json([
-            'amount'        => $request->amount,
-            'points_earned' => $points,
+            'amount'        => $amount,
+            'payment_method' => $method,
+            'points_earned' => $chosen,
+            'card' => [
+                'peso_per_point' => $settings->pesoPerPointFor(LoyaltyPointSetting::CARD_PAYMENT),
+                'points_earned'  => $cardPoints,
+            ],
+            'other' => [
+                'peso_per_point' => $settings->pesoPerPointFor('cash'),
+                'points_earned'  => $otherPoints,
+            ],
             'is_bonus'      => $settings->bonus_enabled && $settings->isBonusPeriod(),
             'multiplier'    => $settings->bonus_enabled && $settings->isBonusPeriod()
                                 ? $settings->bonus_multiplier

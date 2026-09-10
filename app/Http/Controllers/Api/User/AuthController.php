@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api\User;
 
 use App\Http\Controllers\Controller;
+use App\Mail\OtpMail;
 use App\Models\User;
-use App\Services\SocialAuthService;
+use App\Models\QrCode;
+use App\Services\DaleachiousCardService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -14,22 +16,122 @@ use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
+    public function sendSignupCode(Request $request)
+    {
+        $this->normalizeEmail($request);
+
+        $request->validate([
+            'email' => 'required|email|max:190',
+        ]);
+
+        $email = Str::lower($request->string('email')->toString());
+        $existing = User::query()->where('email', $email)->first();
+
+        if ($existing && ! str_ends_with((string) $existing->email, '@deleted.invalid')) {
+            return response()->json([
+                'message' => 'This email already has an account. Sign in instead.',
+            ], 422);
+        }
+
+        $code = (string) random_int(100000, 999999);
+        DB::table('signup_verifications')->updateOrInsert(
+            ['email' => $email],
+            [
+                'code' => Hash::make($code),
+                'registration_token' => null,
+                'verified_at' => null,
+                'created_at' => now(),
+            ],
+        );
+
+        $delivered = $this->sendOtpMail($email, $code, 'signup');
+
+        $payload = [
+            'message' => 'A one-time password was sent to that email.',
+        ];
+
+        if (! $delivered && app()->environment('local')) {
+            $payload['debug_code'] = $code;
+            $payload['message'] = 'Mail is not sending yet. Use this one-time password.';
+        }
+
+        return response()->json($payload);
+    }
+
+    public function verifySignupCode(Request $request)
+    {
+        $this->normalizeEmail($request);
+
+        $request->validate([
+            'email' => 'required|email|max:190',
+            'code' => 'required|string',
+        ]);
+
+        $email = Str::lower($request->string('email')->toString());
+        $row = DB::table('signup_verifications')->where('email', $email)->first();
+
+        if (
+            ! $row
+            || ! Hash::check($request->code, $row->code)
+            || \Illuminate\Support\Carbon::parse($row->created_at)->addMinutes(15)->isPast()
+        ) {
+            return response()->json([
+                'message' => 'That one-time password is invalid or has expired.',
+            ], 422);
+        }
+
+        $registrationToken = Str::random(64);
+        DB::table('signup_verifications')->where('email', $email)->update([
+            'registration_token' => Hash::make($registrationToken),
+            'verified_at' => now(),
+        ]);
+
+        return response()->json([
+            'email' => $email,
+            'registration_token' => $registrationToken,
+            'message' => 'Email confirmed. You can create your account.',
+        ]);
+    }
+
     public function register(Request $request)
     {
+        $this->normalizeEmail($request);
+
         $request->validate([
             'name'     => 'required|string',
             'email'    => 'required|email|unique:users',
             'password' => 'required|min:6',
             'phone'    => 'nullable|string',
+            'registration_token' => 'required|string',
         ]);
+
+        $email = Str::lower($request->string('email')->toString());
+        $row = DB::table('signup_verifications')->where('email', $email)->first();
+
+        if (
+            ! $row
+            || ! $row->registration_token
+            || ! $row->verified_at
+            || ! Hash::check($request->registration_token, $row->registration_token)
+            || \Illuminate\Support\Carbon::parse($row->verified_at)->addMinutes(30)->isPast()
+        ) {
+            return response()->json([
+                'message' => 'Confirm your email with the one-time password first.',
+            ], 422);
+        }
 
         $user = User::create([
             'name'     => $request->name,
-            'email'    => $request->email,
+            'email'    => $email,
             'password' => $request->password,
             'phone'    => $request->phone,
             'points'   => 0,
         ]);
+
+        app(DaleachiousCardService::class)->getOrCreateCard($user);
+        QrCode::getOrCreateForUser($user);
+
+        DB::table('signup_verifications')->where('email', $email)->delete();
 
         $token = $user->createToken('user_token')->plainTextToken;
 
@@ -41,6 +143,8 @@ class AuthController extends Controller
 
     public function login(Request $request)
     {
+        $this->normalizeEmail($request);
+
         $request->validate([
             'email'    => 'required|email',
             'password' => 'required',
@@ -81,6 +185,7 @@ class AuthController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
+        $this->normalizeEmail($request);
 
         $validated = $request->validate([
             'name'  => 'sometimes|required|string|max:120',
@@ -120,34 +225,10 @@ class AuthController extends Controller
         return response()->json(['message' => 'Password updated successfully']);
     }
 
-    public function socialLogin(Request $request, SocialAuthService $social)
-    {
-        $validated = $request->validate([
-            'provider' => 'required|in:google,facebook,apple',
-            'id_token' => 'nullable|string',
-            'access_token' => 'nullable|string',
-            'name' => 'nullable|string|max:120',
-            'email' => 'nullable|email|max:190',
-        ]);
-
-        $user = $social->authenticate(
-            $validated['provider'],
-            $validated['id_token'] ?? null,
-            $validated['access_token'] ?? null,
-            $validated['name'] ?? null,
-            $validated['email'] ?? null,
-        );
-
-        $token = $user->createToken('user_token')->plainTextToken;
-
-        return response()->json([
-            'user' => $user->fresh(),
-            'token' => $token,
-        ]);
-    }
-
     public function forgotPassword(Request $request)
     {
+        $this->normalizeEmail($request);
+
         $request->validate([
             'email' => 'required|email',
         ]);
@@ -165,12 +246,7 @@ class AuthController extends Controller
                 ],
             );
 
-            Mail::raw(
-                "Your Daleachious password reset code is {$code}. It expires in 15 minutes.",
-                function ($message) use ($user) {
-                    $message->to($user->email)->subject('Your Daleachious reset code');
-                },
-            );
+            $this->sendOtpMail($user->email, $code, 'reset');
         }
 
         return response()->json([
@@ -180,6 +256,8 @@ class AuthController extends Controller
 
     public function resetPassword(Request $request)
     {
+        $this->normalizeEmail($request);
+
         $request->validate([
             'email' => 'required|email',
             'code' => 'required|string',
@@ -250,5 +328,36 @@ class AuthController extends Controller
             'message' => 'Profile picture removed',
             'user' => $user->fresh(),
         ]);
+    }
+
+    private function normalizeEmail(Request $request): void
+    {
+        $email = $request->input('email');
+
+        if (is_string($email)) {
+            $request->merge(['email' => Str::lower($email)]);
+        }
+    }
+
+    private function sendOtpMail(string $to, string $code, string $kind): bool
+    {
+        if (config('mail.default') === 'log') {
+            Mail::to($to)->send(new OtpMail($code, $kind));
+
+            return false;
+        }
+
+        try {
+            Mail::to($to)->send(new OtpMail($code, $kind));
+
+            return true;
+        } catch (\Throwable $e) {
+            report($e);
+            if (! app()->environment('local')) {
+                throw $e;
+            }
+
+            return false;
+        }
     }
 }

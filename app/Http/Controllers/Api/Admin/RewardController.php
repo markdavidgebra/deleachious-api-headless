@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Reward;
+use App\Models\PointItem;
 use App\Support\AdminPaginator;
 use Illuminate\Http\Request;
 
@@ -11,7 +11,7 @@ class RewardController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Reward::query()->orderBy('points_required');
+        $query = PointItem::query()->orderBy('points_required');
 
         if (AdminPaginator::requested($request)) {
             return response()->json(
@@ -34,17 +34,17 @@ class RewardController extends Controller
             'expires_at'       => 'nullable|date',
         ]);
 
-        $reward = Reward::create($request->all());
+        $item = PointItem::create($request->all());
 
-        return response()->json($reward, 201);
+        return response()->json($item, 201);
     }
 
-    public function show(Reward $reward)
+    public function show(PointItem $pointItem)
     {
-        return response()->json($reward->load('redemptions'));
+        return response()->json($pointItem->load('redemptions'));
     }
 
-    public function update(Request $request, Reward $reward)
+    public function update(Request $request, PointItem $pointItem)
     {
         $request->validate([
             'name'            => 'sometimes|string',
@@ -55,15 +55,15 @@ class RewardController extends Controller
             'expires_at'      => 'nullable|date',
         ]);
 
-        $reward->update($request->all());
+        $pointItem->update($request->all());
 
-        return response()->json($reward);
+        return response()->json($pointItem);
     }
 
-    public function destroy(Reward $reward)
+    public function destroy(PointItem $pointItem)
     {
-        $reward->delete();
+        $pointItem->delete();
 
-        return response()->json(['message' => 'Reward deleted']);
+        return response()->json(['message' => 'Point item deleted']);
     }
 }

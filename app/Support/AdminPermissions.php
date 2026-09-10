@@ -174,8 +174,8 @@ class AdminPermissions
     {
         $functions = match ($role) {
             'developer', 'super_admin', 'admin' => self::functionNames(),
-            'staff' => ['dashboard', 'orders', 'products', 'qr', 'members', 'redemptions'],
-            'cashier' => ['dashboard', 'orders', 'qr', 'transactions'],
+            'staff' => ['dashboard', 'qr', 'members', 'loyalty', 'card'],
+            'cashier' => ['dashboard', 'qr', 'members', 'card'],
             default => ['dashboard'],
         };
 
@@ -260,45 +260,12 @@ class AdminPermissions
                 ],
             ],
             [
-                'name'   => 'orders',
-                'label'  => 'Orders',
-                'group'  => 'Commerce',
-                'access' => [
-                    ['key' => 'view',   'label' => 'View'],
-                    ['key' => 'update', 'label' => 'Update status'],
-                    ['key' => 'pay',    'label' => 'Record payment'],
-                    ['key' => 'cancel', 'label' => 'Cancel'],
-                ],
-            ],
-            [
-                'name'   => 'transactions',
-                'label'  => 'Transactions',
-                'group'  => 'Commerce',
-                'access' => [
-                    ['key' => 'view',   'label' => 'View'],
-                    ['key' => 'create', 'label' => 'Record payment'],
-                    ['key' => 'refund', 'label' => 'Refund'],
-                ],
-            ],
-            [
-                'name'   => 'products',
-                'label'  => 'Menu & Products',
-                'group'  => 'Commerce',
-                'access' => [
-                    ['key' => 'view',   'label' => 'View'],
-                    ['key' => 'create', 'label' => 'Create'],
-                    ['key' => 'update', 'label' => 'Edit'],
-                    ['key' => 'delete', 'label' => 'Delete'],
-                ],
-            ],
-            [
                 'name'   => 'qr',
                 'label'  => 'QR / Scan',
-                'group'  => 'Commerce',
+                'group'  => 'Customers',
                 'access' => [
-                    ['key' => 'generate', 'label' => 'Generate'],
-                    ['key' => 'scan',     'label' => 'Scan'],
-                    ['key' => 'history',  'label' => 'History'],
+                    ['key' => 'scan',    'label' => 'Scan'],
+                    ['key' => 'history', 'label' => 'History'],
                 ],
             ],
             [
@@ -318,23 +285,22 @@ class AdminPermissions
                 'label'  => 'Loyalty Program',
                 'group'  => 'Customers',
                 'access' => [
-                    ['key' => 'rewards',  'label' => 'Rewards'],
-                    ['key' => 'manage',   'label' => 'Add / edit rewards'],
+                    ['key' => 'points',   'label' => 'Points'],
+                    ['key' => 'manage',   'label' => 'Add / edit points'],
                     ['key' => 'settings', 'label' => 'Point settings'],
                 ],
             ],
             [
-                'name'   => 'redemptions',
-                'label'  => 'Redemptions',
+                'name'   => 'card',
+                'label'  => 'Daleachious Card',
                 'group'  => 'Customers',
                 'access' => [
-                    ['key' => 'view',   'label' => 'View'],
-                    ['key' => 'review', 'label' => 'Approve / reject'],
+                    ['key' => 'confirm', 'label' => 'Confirm top-ups'],
                 ],
             ],
             [
                 'name'   => 'branches',
-                'label'  => 'Branches',
+                'label'  => 'Locations',
                 'group'  => 'Administration',
                 'access' => [
                     ['key' => 'view',   'label' => 'View'],

@@ -3,8 +3,6 @@
 namespace App\Support;
 
 use App\Models\Admin;
-use App\Models\Order;
-use App\Models\Transaction;
 use Illuminate\Database\Eloquent\Builder;
 
 class AdminBranchScope
@@ -45,28 +43,6 @@ class AdminBranchScope
         return (int) $request->branch_id;
     }
 
-    public static function applyToOrders(Builder $query, $request = null): Builder
-    {
-        $branchId = self::requestedBranchId($request);
-
-        if ($branchId) {
-            $query->where('branch_id', $branchId);
-        }
-
-        return $query;
-    }
-
-    public static function applyToTransactions(Builder $query, $request = null): Builder
-    {
-        $branchId = self::requestedBranchId($request);
-
-        if ($branchId) {
-            $query->whereHas('order', fn (Builder $q) => $q->where('branch_id', $branchId));
-        }
-
-        return $query;
-    }
-
     public static function applyColumn(Builder $query, string $column = 'branch_id', $request = null): Builder
     {
         $branchId = self::requestedBranchId($request);
@@ -80,33 +56,12 @@ class AdminBranchScope
 
     public static function resolveWriteBranchId(?int $requested): ?int
     {
-        return self::branchId() ?? $requested;
-    }
-
-    public static function assertOrder(Order $order): void
-    {
-        $branchId = self::branchId();
-
-        if ($branchId && (int) $order->branch_id !== $branchId) {
-            abort(404);
-        }
-    }
-
-    public static function assertTransaction(Transaction $transaction): void
-    {
-        $order = $transaction->relationLoaded('order')
-            ? $transaction->order
-            : $transaction->order()->first();
-
-        if ($order) {
-            self::assertOrder($order);
-
-            return;
+        $locked = self::branchId();
+        if ($locked) {
+            return $locked;
         }
 
-        if (self::isLocked()) {
-            abort(404);
-        }
+        return $requested ?? (self::actor()?->branch_id ? (int) self::actor()->branch_id : null);
     }
 
     public static function assertBranchId(?int $branchId): void

@@ -12,7 +12,7 @@ class BranchController extends Controller
     // GET all branches
     public function index()
     {
-        $branches = Branch::withCount(['staff', 'orders']);
+        $branches = Branch::withCount(['staff']);
         AdminBranchScope::applyColumn($branches, 'id');
 
         $branches = $branches->orderBy('name')->get();
@@ -24,7 +24,7 @@ class BranchController extends Controller
     public function store(Request $request)
     {
         if (AdminBranchScope::isLocked()) {
-            return response()->json(['message' => 'Only head office can add a branch.'], 403);
+            return response()->json(['message' => 'Only head office can add a location.'], 403);
         }
 
         $request->validate([
@@ -52,7 +52,7 @@ class BranchController extends Controller
         AdminBranchScope::assertBranchId($branch->id);
 
         return response()->json(
-            $branch->load(['staff', 'orders'])
+            $branch->load(['staff'])
         );
     }
 
@@ -84,11 +84,11 @@ class BranchController extends Controller
     public function destroy(Branch $branch)
     {
         if (AdminBranchScope::isLocked()) {
-            return response()->json(['message' => 'Only head office can remove a branch.'], 403);
+            return response()->json(['message' => 'Only head office can remove a location.'], 403);
         }
         if ($branch->staff()->count() > 0) {
             return response()->json([
-                'message' => 'Cannot delete branch — it still has staff assigned to it.',
+                'message' => 'Cannot delete location — it still has staff assigned to it.',
             ], 422);
         }
 
@@ -103,15 +103,8 @@ class BranchController extends Controller
         AdminBranchScope::assertBranchId($branch->id);
 
         return response()->json([
-            'branch'         => $branch->only(['id', 'name', 'code', 'city']),
-            'total_staff'    => $branch->staff()->count(),
-            'total_orders'   => $branch->orders()->count(),
-            'completed_orders' => $branch->orders()->where('status', 'completed')->count(),
-            'total_sales'    => $branch->orders()
-                ->whereHas('transaction', fn ($q) => $q->where('status', 'paid'))
-                ->with('transaction')
-                ->get()
-                ->sum(fn ($o) => $o->transaction?->amount ?? 0),
+            'branch'      => $branch->only(['id', 'name', 'code', 'city']),
+            'total_staff' => $branch->staff()->count(),
         ]);
     }
 }
