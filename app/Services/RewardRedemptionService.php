@@ -11,8 +11,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Member point redemption: hold points on request, then fulfill at QR scan.
- * The persisted "approved" status is retained for database compatibility.
+ * Member point redemption: reserve points on request, charge them at the QR scan.
+ * A pending redemption never leaves the member's balance — only a successful staff
+ * scan spends the points. The persisted "approved" status is retained for
+ * database compatibility.
  */
 class RewardRedemptionService
 {
@@ -30,22 +32,13 @@ class RewardRedemptionService
 
             $this->assertItemRedeemable($item);
 
-            if ((int) $locked->points < (int) $item->points_required) {
+            $pointsUsed = (int) $item->points_required;
+
+            if ($this->availablePoints($locked) < $pointsUsed) {
                 throw ValidationException::withMessages([
                     'point_item_id' => ['Not enough points to redeem this item.'],
                 ]);
             }
-
-            $pointsUsed = (int) $item->points_required;
-
-            LoyaltyPoint::create([
-                'user_id'     => $locked->id,
-                'points'      => -$pointsUsed,
-                'type'        => 'redeemed',
-                'description' => 'Redeemed: '.$item->name,
-            ]);
-
-            $locked->decrement('points', $pointsUsed);
 
             $redemption = Redemption::create([
                 'user_id'       => $locked->id,
@@ -58,10 +51,11 @@ class RewardRedemptionService
             $qr = $this->createRedemptionQr($redemption);
             $redemption->setRelation('qrCode', $qr);
 
+            // Balance is untouched until staff scan the QR.
             return [
                 'redemption'  => $redemption->load('pointItem'),
                 'qr_code'     => $qr,
-                'points_left' => (int) $locked->fresh()->points,
+                'points_left' => (int) $locked->points,
                 'item'        => $item,
                 'reward'      => $item,
             ];
@@ -82,13 +76,13 @@ class RewardRedemptionService
 
             $this->assertItemRedeemable($item);
 
-            if ((int) $locked->points < (int) $item->points_required) {
+            $pointsUsed = (int) $item->points_required;
+
+            if ($this->availablePoints($locked) < $pointsUsed) {
                 throw ValidationException::withMessages([
                     'point_item_id' => ['Not enough points to redeem this item.'],
                 ]);
             }
-
-            $pointsUsed = (int) $item->points_required;
 
             LoyaltyPoint::create([
                 'user_id'     => $locked->id,
@@ -128,6 +122,28 @@ class RewardRedemptionService
                 ]);
             }
 
+            /** @var User $user */
+            $user = User::query()->lockForUpdate()->findOrFail($locked->user_id);
+            $pointsUsed = (int) $locked->points_used;
+
+            // The scan is what actually spends the points.
+            if ($pointsUsed > 0) {
+                if ((int) $user->points < $pointsUsed) {
+                    throw ValidationException::withMessages([
+                        'points' => ['This member no longer has enough points for this item.'],
+                    ]);
+                }
+
+                LoyaltyPoint::create([
+                    'user_id'     => $user->id,
+                    'points'      => -$pointsUsed,
+                    'type'        => 'redeemed',
+                    'description' => 'Redeemed: '.($locked->pointItem?->name ?? 'point item'),
+                ]);
+
+                $user->decrement('points', $pointsUsed);
+            }
+
             $locked->update([
                 'status'      => 'approved',
                 'redeemed_at' => now(),
@@ -151,20 +167,7 @@ class RewardRedemptionService
                 ]);
             }
 
-            /** @var User $user */
-            $user = User::query()->lockForUpdate()->findOrFail($locked->user_id);
-            $points = (int) $locked->points_used;
-
-            if ($points > 0) {
-                LoyaltyPoint::create([
-                    'user_id'     => $user->id,
-                    'points'      => $points,
-                    'type'        => 'adjustment',
-                    'description' => 'Refund for rejected redemption #'.$locked->id,
-                ]);
-                $user->increment('points', $points);
-            }
-
+            // Nothing to refund — a pending redemption never left the balance.
             $locked->update([
                 'status'      => 'rejected',
                 'redeemed_at' => null,
@@ -221,6 +224,20 @@ class RewardRedemptionService
             ->where('qrable_id', $redemption->id)
             ->where('is_active', true)
             ->update(['is_active' => false]);
+    }
+
+    /**
+     * Points the member can still commit: their balance minus everything already
+     * promised to pending redemptions that have not been scanned yet.
+     */
+    protected function availablePoints(User $user): int
+    {
+        $committed = (int) Redemption::query()
+            ->where('user_id', $user->id)
+            ->where('status', 'pending')
+            ->sum('points_used');
+
+        return (int) $user->points - $committed;
     }
 
     protected function assertItemRedeemable(PointItem $item): void

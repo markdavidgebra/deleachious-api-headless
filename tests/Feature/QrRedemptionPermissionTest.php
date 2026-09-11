@@ -43,6 +43,14 @@ class QrRedemptionPermissionTest extends TestCase
         $redemptionCode = $redemptionResponse->json('qr_code.code');
         $redemptionId = $redemptionResponse->json('redemption.id');
 
+        // Requesting the item must not touch the balance — only the scan spends points.
+        $redemptionResponse->assertJsonPath('points_left', 100);
+        $this->assertSame(100, $user->fresh()->points);
+        $this->assertDatabaseMissing('loyalty_points', [
+            'user_id' => $user->id,
+            'type' => 'redeemed',
+        ]);
+
         $branch = Branch::query()->create([
             'name' => 'Redemption Branch',
             'code' => 'REDEEM-TEST',
@@ -65,7 +73,13 @@ class QrRedemptionPermissionTest extends TestCase
             ->assertJsonPath('action', 'fulfill_redemption')
             ->assertJsonPath('member_code', $memberCode);
 
+        // The scan is what charges the member.
         $this->assertSame(50, $user->fresh()->points);
+        $this->assertDatabaseHas('loyalty_points', [
+            'user_id' => $user->id,
+            'type' => 'redeemed',
+            'points' => -50,
+        ]);
         $this->assertDatabaseHas('redemptions', [
             'id' => $redemptionId,
             'status' => 'approved',
