@@ -64,6 +64,6 @@ class RewardController extends Controller
     {
         $pointItem->delete();
 
-        return response()->json(['message' => 'Point item deleted']);
+        return response()->json(['message' => "Dalea'Credits item deleted"]);
     }
 }

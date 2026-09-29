@@ -12,6 +12,10 @@ return [
         // Cash, credit/debit, or selected e-wallets after scanning the member QR.
         'other_peso_per_point' => (float) env('DALEACHIOUS_OTHER_PESO_PER_POINT', 50),
     ],
+    'credits' => [
+        'name' => "Dalea'Credits",
+        'singular' => "Dalea'Credit",
+    ],
     'purchase_payment_methods' => [
         'daleachious_card' => 'Daleachious Card',
         'cash' => 'Cash',

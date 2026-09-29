@@ -365,13 +365,13 @@
                 <ul class="list list-danger">
                     <li>Profile information (name, email, phone number, profile photo)</li>
                     <li>Personal information stored in your account</li>
-                    <li>Loyalty points balance</li>
+                    <li>Dalea'Credits balance</li>
                     <li>Saved addresses</li>
                     <li>Push notification tokens and in-app notification history</li>
                     <li>Login sessions and API access tokens</li>
                 </ul>
                 <p class="warning-box">
-                    Account deletion is permanent. Any unused loyalty points will be forfeited and cannot be restored.
+                    Account deletion is permanent. Any unused Dalea'Credits will be forfeited and cannot be restored.
                 </p>
             </section>
 
@@ -382,7 +382,7 @@
                     To comply with tax, financial, and regulatory requirements, we may retain certain non-personal records after account deletion, including:
                 </p>
                 <ul class="list">
-                    <li>Loyalty point ledgers needed for audit</li>
+                    <li>Dalea'Credits ledgers needed for audit</li>
                     <li>Staff scan and redemption records needed for audit</li>
                 </ul>
                 <p>

@@ -15,7 +15,7 @@
             <div class="hero-inner">
                 <p class="brand">Daleachious Cafe</p>
                 <h1>{{ $title }}</h1>
-                <p class="hero-meta">Effective date: September 8, 2026</p>
+                <p class="hero-meta">Effective date: September 29, 2026</p>
             </div>
         </header>
 

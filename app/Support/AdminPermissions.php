@@ -274,10 +274,10 @@ class AdminPermissions
                 'group'  => 'Customers',
                 'access' => [
                     ['key' => 'view',        'label' => 'View'],
-                    ['key' => 'adjust',      'label' => 'Adjust points'],
+                    ['key' => 'adjust',      'label' => "Adjust Dalea'Credits"],
                     ['key' => 'hide_email',  'label' => 'Hide email',  'kind' => 'restrict'],
                     ['key' => 'hide_phone',  'label' => 'Hide phone',  'kind' => 'restrict'],
-                    ['key' => 'hide_points', 'label' => 'Hide points', 'kind' => 'restrict'],
+                    ['key' => 'hide_points', 'label' => "Hide Dalea'Credits", 'kind' => 'restrict'],
                 ],
             ],
             [
@@ -285,9 +285,9 @@ class AdminPermissions
                 'label'  => 'Loyalty Program',
                 'group'  => 'Customers',
                 'access' => [
-                    ['key' => 'points',   'label' => 'Points'],
-                    ['key' => 'manage',   'label' => 'Add / edit points'],
-                    ['key' => 'settings', 'label' => 'Point settings'],
+                    ['key' => 'points',   'label' => "Dalea'Credits"],
+                    ['key' => 'manage',   'label' => "Add / edit Dalea'Credits"],
+                    ['key' => 'settings', 'label' => "Dalea'Credits settings"],
                 ],
             ],
             [

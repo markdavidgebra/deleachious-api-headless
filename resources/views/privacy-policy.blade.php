@@ -9,7 +9,7 @@
         <span class="section-label">Section 01</span>
         <h2>Who we are</h2>
         <p>
-            Daleachious is a cafe loyalty app. Members create an account, earn points at the counter, and redeem them in our cafes.
+            Daleachious is a cafe loyalty app. Members create an account, earn Dalea'Credits at the counter, and redeem them in our cafes.
         </p>
     </section>
 
@@ -20,7 +20,7 @@
         <ul class="list">
             <li>Account details: name, email address, and optional phone number</li>
             <li>Profile photo, if you choose to add one</li>
-            <li>Loyalty records: points, visits, and redemptions</li>
+            <li>Loyalty records: Dalea'Credits, visits, and redemptions</li>
             <li>Sign-in and security data, including one-time passwords we email you</li>
             <li>Device information needed to keep you signed in and send notifications you allow</li>
             <li>Messages you send us through Support</li>
@@ -35,7 +35,7 @@
             <li>Create and manage your account</li>
             <li>Confirm your email and reset your password</li>
             <li>Run the loyalty program at the cafe counter</li>
-            <li>Show your points and member QR</li>
+            <li>Show your Dalea'Credits and member QR</li>
             <li>Send service messages and, if you allow them, app notifications</li>
             <li>Provide customer support and keep the app secure</li>
         </ul>
@@ -62,7 +62,7 @@
         <h2>Sharing</h2>
         <p class="highlight">We do not sell your personal information.</p>
         <p>
-            We share data only with service providers that host the app and send email, and when the law requires it. Cafe staff see what they need to earn or redeem points at the counter.
+            We share data only with service providers that host the app and send email, and when the law requires it. Cafe staff see what they need to earn or redeem Dalea'Credits at the counter.
         </p>
     </section>
 

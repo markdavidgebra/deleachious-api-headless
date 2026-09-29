@@ -43,7 +43,7 @@ class LoyaltyPointSettingController extends Controller
         $settings->update($payload);
 
         return response()->json([
-            'message'  => 'Loyalty point settings updated successfully',
+            'message'  => "Dalea'Credits settings updated successfully",
             'settings' => $settings,
         ]);
     }
@@ -96,7 +96,7 @@ class LoyaltyPointSettingController extends Controller
         // Prevent points going below 0
         if ($user->points + $request->points < 0) {
             return response()->json([
-                'message' => 'Cannot deduct more points than the member has.',
+                'message' => "Cannot deduct more Dalea'Credits than the member has.",
                 'current_points' => $user->points,
             ], 422);
         }
@@ -113,7 +113,7 @@ class LoyaltyPointSettingController extends Controller
         $user->increment('points', $request->points);
 
         return response()->json([
-            'message'        => 'Points adjusted successfully',
+            'message'        => "Dalea'Credits adjusted successfully",
             'points_changed' => $request->points,
             'new_total'      => $user->fresh()->points,
         ]);
@@ -126,7 +126,7 @@ class LoyaltyPointSettingController extends Controller
 
         if (! $settings->expiry_enabled) {
             return response()->json([
-                'message' => 'Point expiry is currently disabled in settings.',
+                'message' => "Dalea'Credits expiry is currently disabled in settings.",
             ], 422);
         }
 
@@ -150,7 +150,7 @@ class LoyaltyPointSettingController extends Controller
                 'user_id'     => $point->user_id,
                 'points'      => -$point->points,
                 'type'        => 'expired',
-                'description' => 'Points expired after ' . $settings->expiry_days . ' days',
+                'description' => "Dalea'Credits expired after " . $settings->expiry_days . ' days',
             ]);
 
             // Deduct from user
@@ -160,7 +160,7 @@ class LoyaltyPointSettingController extends Controller
         }
 
         return response()->json([
-            'message'        => 'Points expiry completed',
+            'message'        => "Dalea'Credits expiry completed",
             'total_expired'  => $totalExpired,
             'users_affected' => $oldPoints->pluck('user_id')->unique()->count(),
         ]);

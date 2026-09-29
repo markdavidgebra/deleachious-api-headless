@@ -108,12 +108,12 @@ class MemberController extends Controller
         AuditLogService::log(
             'adjusted',
             'member',
-            'Points adjusted for ' . $user->name . ': ' . $request->points . ' points (' . $request->type . ')',
+            "Dalea'Credits adjusted for " . $user->name . ': ' . $request->points . " Dalea'Credits (" . $request->type . ')',
             $user
         );
 
         return response()->json([
-            'message' => 'Points adjusted successfully',
+            'message' => "Dalea'Credits adjusted successfully",
             'user'    => $this->present($user->fresh(), $this->actor($request)),
         ]);
     }

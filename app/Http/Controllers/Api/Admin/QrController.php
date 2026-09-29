@@ -172,7 +172,7 @@ class QrController extends Controller
 
             return [
                 'result'  => 'failed',
-                'message' => 'This QR cannot fulfill a reward. Ask the member to open Points and show their reward QR.',
+                'message' => "This QR cannot fulfill a reward. Ask the member to open Dalea'Credits and show their reward QR.",
             ];
         }
 
@@ -428,15 +428,19 @@ class QrController extends Controller
                     'action'          => 'earn_points',
                     'result'          => 'success',
                     'points_affected' => $points,
-                    'notes'           => $this->cards->formatPeso($amount).' '.$methodLabel.' — '.$points.' Points for '.$user->name,
+                    'notes'           => $this->cards->formatPeso($amount).' '.$methodLabel.' — '.$points.' '.($points === 1 ? config('daleachious.credits.singular') : config('daleachious.credits.name')).' for '.$user->name,
                 ]);
 
                 $freshUser = $user->fresh();
                 $card = $this->cards->getOrCreateCard($freshUser);
 
+                $creditsLabel = $points === 1
+                    ? config('daleachious.credits.singular')
+                    : config('daleachious.credits.name');
+
                 $message = $isCardPay
-                    ? $this->cards->formatPeso($amount).' charged to the Daleachious Card. '.$points.' Points added.'
-                    : $points.' Points added for a '.$methodLabel.' purchase.';
+                    ? $this->cards->formatPeso($amount).' charged to the Daleachious Card. '.$points.' '.$creditsLabel.' added.'
+                    : $points.' '.$creditsLabel.' added for a '.$methodLabel.' purchase.';
 
                 return [
                     'result'                   => 'success',
@@ -543,7 +547,7 @@ class QrController extends Controller
 
         return [
             'result'      => 'success',
-            'message'     => 'Points redeemed successfully!',
+            'message'     => "Dalea'Credits redeemed successfully!",
             'item'        => $result['item'],
             'reward'      => $result['item'],
             'redemption'  => $result['redemption'],

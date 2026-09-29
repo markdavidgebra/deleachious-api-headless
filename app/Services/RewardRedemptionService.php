@@ -36,7 +36,7 @@ class RewardRedemptionService
 
             if ($this->availablePoints($locked) < $pointsUsed) {
                 throw ValidationException::withMessages([
-                    'point_item_id' => ['Not enough points to redeem this item.'],
+                    'point_item_id' => ["Not enough Dalea'Credits to redeem this item."],
                 ]);
             }
 
@@ -80,7 +80,7 @@ class RewardRedemptionService
 
             if ($this->availablePoints($locked) < $pointsUsed) {
                 throw ValidationException::withMessages([
-                    'point_item_id' => ['Not enough points to redeem this item.'],
+                    'point_item_id' => ["Not enough Dalea'Credits to redeem this item."],
                 ]);
             }
 
@@ -130,7 +130,7 @@ class RewardRedemptionService
             if ($pointsUsed > 0) {
                 if ((int) $user->points < $pointsUsed) {
                     throw ValidationException::withMessages([
-                        'points' => ['This member no longer has enough points for this item.'],
+                        'points' => ["This member no longer has enough Dalea'Credits for this item."],
                     ]);
                 }
 

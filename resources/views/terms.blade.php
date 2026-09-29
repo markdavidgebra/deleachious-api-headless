@@ -9,7 +9,7 @@
         <span class="section-label">Section 01</span>
         <h2>The app</h2>
         <p>
-            Daleachious is a loyalty membership for Daleachious Cafe. You can create an account, show a member QR at the counter to earn points, and redeem points.
+            Daleachious is a loyalty membership for Daleachious Cafe. You can create an account, show a member QR at the counter to earn Dalea'Credits, and redeem Dalea'Credits.
         </p>
     </section>
 
@@ -31,9 +31,9 @@
 
     <section class="section">
         <span class="section-label">Section 04</span>
-        <h2>Loyalty points</h2>
+        <h2>Dalea'Credits</h2>
         <p>
-            Points are earned and redeemed only at participating Daleachious cafes, according to the rules posted in the app and at the counter. Points have no cash value, are not transferable, and may expire or change. We may refuse a redemption that looks fraudulent or that does not follow the posted rules.
+            Dalea'Credits are earned only on purchases at participating Daleachious cafes: 1 Dalea'Credit per ₱25 when you pay with a registered Daleachious Card, and 1 Dalea'Credit per ₱50 when you scan your member code and pay cash, credit/debit, or selected e-wallets. Reloading the Card does not earn Dalea'Credits. Dalea'Credits have no cash value, are not transferable, and may expire or change. We may refuse a redemption that looks fraudulent or that does not follow the posted rules.
         </p>
     </section>
 
@@ -43,7 +43,7 @@
         <p>You agree not to:</p>
         <ul class="list">
             <li>Share your account or one-time passwords with others</li>
-            <li>Try to earn or redeem points in a dishonest way</li>
+            <li>Try to earn or redeem Dalea'Credits in a dishonest way</li>
             <li>Interfere with the app, other members, or cafe operations</li>
             <li>Copy, reverse engineer, or misuse the app or our marks</li>
         </ul>
